@@ -4,6 +4,7 @@ const { formatResponse, formatError, validateRequest } = require('./envelope');
 const { extractMeta, appendTrace } = require('./meta');
 const { ERROR_CODES, RpcError } = require('../../contracts/errors');
 const { logger } = require('../logger');
+const { faults } = require('../faults');
 
 class RpcServer {
   constructor() {
@@ -49,13 +50,23 @@ class RpcServer {
       }
 
       try {
+        if (method.startsWith('bank.')) {
+          const rpcDelay = faults.getFault('rpcDelayMs');
+          if (typeof rpcDelay === 'number' && rpcDelay > 0) {
+            await new Promise(r => setTimeout(r, rpcDelay));
+          }
+        }
+
         const result = await handler(params, meta, req);
         const [s, ns] = process.hrtime(startTime);
         const durationMs = s * 1000 + ns / 1e6;
 
-        if (result && typeof result === 'object' && meta && !result._meta) {
-          appendTrace(meta, 'rpc.responded', durationMs);
-          result._meta = meta;
+        if (result && typeof result === 'object') {
+          const outMeta = result._meta || meta;
+          if (outMeta) {
+            appendTrace(outMeta, 'rpc.responded', durationMs);
+            result._meta = outMeta;
+          }
         }
 
         logger.debug({ event: 'rpc.success', method, id, durationMs });
@@ -74,8 +85,12 @@ class RpcServer {
         });
 
         // Pass meta back in error data if available
-        if (meta && err instanceof RpcError) {
-          err.data = { ...(err.data || {}), _meta: meta };
+        if (meta) {
+          if (err instanceof RpcError) {
+            err.data = { ...(err.data || {}), _meta: meta };
+          } else if (typeof err === 'object' && err !== null) {
+            err.data = { ...(err.data || {}), _meta: meta };
+          }
         }
 
         return res.status(200).json(formatError(id, err));

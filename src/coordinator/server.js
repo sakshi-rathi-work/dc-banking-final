@@ -6,6 +6,10 @@ const { logger } = require('../shared/logger');
 const { RpcServer } = require('../shared/rpc/server');
 const { callRpc } = require('../shared/rpc/client');
 
+const { LeaderTracker } = require('./leaderTracker');
+const { Gateway } = require('./gateway');
+const { METHOD_NAMES } = require('../contracts/methods');
+
 async function main() {
   const config = loadConfig();
   logger.info({
@@ -14,6 +18,9 @@ async function main() {
     pid: process.pid,
     hostname: os.hostname()
   });
+
+  const leaderTracker = new LeaderTracker(config.peers);
+  const gateway = new Gateway(leaderTracker, config);
 
   const app = express();
   const rpcServer = new RpcServer();
@@ -52,6 +59,21 @@ async function main() {
       nodes
     };
   });
+
+  // Explicit gateway.call handler
+  rpcServer.register('gateway.call', async (params, meta) => {
+    const { method, params: innerParams } = params || {};
+    return gateway.handleCall(method, innerParams, meta);
+  });
+
+  // Direct banking and admin calls proxied through gateway
+  for (const method of Object.values(METHOD_NAMES)) {
+    if (method.startsWith('bank.') || method.startsWith('admin.')) {
+      rpcServer.register(method, async (params, meta) => {
+        return gateway.handleCall(method, params, meta);
+      });
+    }
+  }
 
   app.use(rpcServer.createMiddleware());
 

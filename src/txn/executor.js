@@ -8,6 +8,7 @@ const { claimIdempotencyKey, storeIdempotencyResult } = require('./idempotency')
 const { validateAccountId, validateHolderName, validateAmount, validateIdempotencyKey } = require('../domain/validators');
 const { compareMoney } = require('../domain/money');
 const { RpcError, ERROR_CODES } = require('../contracts/errors');
+const { appendTrace } = require('../shared/rpc/meta');
 
 async function executeBankOperation(operation, params, meta = {}, customClient = null) {
   const pool = getPool();
@@ -23,6 +24,9 @@ async function executeBankOperation(operation, params, meta = {}, customClient =
     const claim = await claimIdempotencyKey(client, key, operation, params);
     if (!claim.claimed) {
       await client.query('COMMIT');
+      if (meta && meta.trace) {
+        appendTrace(meta, 'idempotency.hit');
+      }
       const stored = claim.result;
       if (stored && stored.status === 'REJECTED') {
         throw new RpcError(
@@ -58,6 +62,9 @@ async function executeBankOperation(operation, params, meta = {}, customClient =
     }
 
     await client.query('COMMIT');
+    if (meta && meta.trace) {
+      appendTrace(meta, 'db.commit');
+    }
 
     if (result && result.status === 'REJECTED') {
       throw new RpcError(

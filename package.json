@@ -4,8 +4,9 @@
   "description": "Real Distributed Banking System across four nodes and four PostgreSQL databases",
   "main": "src/node/server.js",
   "scripts": {
+    "test": "npm run test:unit && npm run test:integration",
     "test:unit": "node --test tests/unit/**/*.test.js",
-    "test:integration": "node --test tests/integration/**/*.test.js",
+    "test:integration": "node --test tests/integration/phase0.test.js && node --test tests/integration/phase1.test.js && node --test tests/integration/phase2.test.js",
     "test:acceptance": "node --test tests/acceptance/**/*.test.js",
     "cli": "node src/cli/index.js",
     "demo:reset": "node scripts/demo-reset.js"

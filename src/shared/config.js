@@ -76,7 +76,7 @@ function loadConfig() {
     databaseUrl,
     peersStr: env.PEERS || '',
     peers,
-    coordinatorUrl: env.COORDINATOR_URL || 'http://bank-coordinator:8080',
+    coordinatorUrl: env.COORDINATOR_URL || 'http://localhost:8080',
     bootstrapPrimary: env.BOOTSTRAP_PRIMARY === 'true',
 
     // Failure detector & cluster timers

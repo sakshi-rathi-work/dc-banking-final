@@ -19,11 +19,12 @@ function extractMeta(params) {
   return null;
 }
 
-function appendTrace(meta, eventName, dtMs = 0) {
+function appendTrace(meta, eventName, dtMs = 0, nodeOverride = null) {
   if (!meta) return;
   if (!meta.trace) meta.trace = [];
+  const node = nodeOverride || (process.env.NODE_ID ? `node-${process.env.NODE_ID}` : 'coordinator');
   meta.trace.push({
-    node: process.env.NODE_ID ? `node-${process.env.NODE_ID}` : 'coordinator',
+    node,
     event: eventName,
     lamport: meta.lamport || 0,
     dtMs: Math.round(dtMs * 100) / 100

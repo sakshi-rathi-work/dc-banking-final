@@ -1,5 +1,5 @@
 // tests/integration/phase1.test.js: Phase 1 Core Banking Integration Tests
-const { describe, it } = require('node:test');
+const { describe, it, before } = require('node:test');
 const assert = require('node:assert/strict');
 const { execSync } = require('child_process');
 const { callRpc } = require('../../src/shared/rpc/client');
@@ -11,6 +11,11 @@ describe('Phase 1: Core Banking Engine and Invariants', () => {
 
   let acc1Id = null;
   let acc2Id = null;
+
+  before(async () => {
+    await callRpc(nodeA, 'cluster.clearFaults', {}).catch(() => {});
+    await callRpc(nodeB, 'cluster.clearFaults', {}).catch(() => {});
+  });
 
   it('rejects mutating writes on non-primary node B with NOT_PRIMARY', async () => {
     let failed = false;

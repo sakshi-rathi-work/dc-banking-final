@@ -1,4 +1,4 @@
-// src/node/methods/cluster.js: Cluster RPC handlers for node
+const { faults } = require('../../shared/faults');
 const { getNodeState } = require('../state');
 
 function registerClusterMethods(rpcServer, failureDetector, config) {
@@ -7,6 +7,34 @@ function registerClusterMethods(rpcServer, failureDetector, config) {
       pong: true,
       nodeId: config.nodeId,
       timestamp: Date.now()
+    };
+  });
+
+  rpcServer.register('cluster.setFault', async (params) => {
+    const { knob, value } = params || {};
+    if (!knob) {
+      throw new Error('Missing fault knob');
+    }
+    faults.setFault(knob, value);
+    return {
+      set: true,
+      knob,
+      value
+    };
+  });
+
+  rpcServer.register('cluster.getFaults', async () => {
+    return {
+      nodeId: config.nodeId,
+      faults: faults.getFaults()
+    };
+  });
+
+  rpcServer.register('cluster.clearFaults', async () => {
+    faults.clearFaults();
+    return {
+      nodeId: config.nodeId,
+      cleared: true
     };
   });
 
