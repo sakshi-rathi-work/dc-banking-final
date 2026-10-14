@@ -1,0 +1,191 @@
+name: distributed-banking
+
+networks:
+  bank-net:
+    driver: bridge
+
+volumes:
+  pgdata-a: {}
+  pgdata-b: {}
+  pgdata-c: {}
+  pgdata-d: {}
+
+x-node: &node
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+  command: ["node", "src/node/server.js"]
+  networks: [bank-net]
+  restart: "no"
+  healthcheck:
+    test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+    interval: 2s
+    timeout: 2s
+    retries: 15
+  environment: &node-env
+    NODE_PORT: "3000"
+    PEERS: "a=http://bank-node-a:3000,b=http://bank-node-b:3000,c=http://bank-node-c:3000,d=http://bank-node-d:3000"
+    COORDINATOR_URL: "http://bank-coordinator:8080"
+    ENABLE_FAULT_INJECTION: "true"
+
+services:
+  postgres-a:
+    image: postgres:16-alpine
+    container_name: postgres-a
+    networks: [bank-net]
+    environment:
+      POSTGRES_DB: bank
+      POSTGRES_USER: bank_a
+      POSTGRES_PASSWORD: pw_a
+    volumes:
+      - "pgdata-a:/var/lib/postgresql/data"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bank_a -d bank"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    restart: "no"
+
+  bank-node-a:
+    <<: *node
+    container_name: bank-node-a
+    ports: ["3001:3000"]
+    depends_on:
+      postgres-a:
+        condition: service_healthy
+    environment:
+      <<: *node-env
+      NODE_ID: a
+      DATABASE_URL: postgres://bank_a:pw_a@postgres-a:5432/bank
+      BOOTSTRAP_PRIMARY: "true"
+
+  postgres-b:
+    image: postgres:16-alpine
+    container_name: postgres-b
+    networks: [bank-net]
+    environment:
+      POSTGRES_DB: bank
+      POSTGRES_USER: bank_b
+      POSTGRES_PASSWORD: pw_b
+    volumes:
+      - "pgdata-b:/var/lib/postgresql/data"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bank_b -d bank"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    restart: "no"
+
+  bank-node-b:
+    <<: *node
+    container_name: bank-node-b
+    ports: ["3002:3000"]
+    depends_on:
+      postgres-b:
+        condition: service_healthy
+    environment:
+      <<: *node-env
+      NODE_ID: b
+      DATABASE_URL: postgres://bank_b:pw_b@postgres-b:5432/bank
+
+  postgres-c:
+    image: postgres:16-alpine
+    container_name: postgres-c
+    networks: [bank-net]
+    environment:
+      POSTGRES_DB: bank
+      POSTGRES_USER: bank_c
+      POSTGRES_PASSWORD: pw_c
+    volumes:
+      - "pgdata-c:/var/lib/postgresql/data"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bank_c -d bank"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    restart: "no"
+
+  bank-node-c:
+    <<: *node
+    container_name: bank-node-c
+    ports: ["3003:3000"]
+    depends_on:
+      postgres-c:
+        condition: service_healthy
+    environment:
+      <<: *node-env
+      NODE_ID: c
+      DATABASE_URL: postgres://bank_c:pw_c@postgres-c:5432/bank
+
+  postgres-d:
+    image: postgres:16-alpine
+    container_name: postgres-d
+    networks: [bank-net]
+    environment:
+      POSTGRES_DB: bank
+      POSTGRES_USER: bank_d
+      POSTGRES_PASSWORD: pw_d
+    volumes:
+      - "pgdata-d:/var/lib/postgresql/data"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bank_d -d bank"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    restart: "no"
+
+  bank-node-d:
+    <<: *node
+    container_name: bank-node-d
+    ports: ["3004:3000"]
+    depends_on:
+      postgres-d:
+        condition: service_healthy
+    environment:
+      <<: *node-env
+      NODE_ID: d
+      DATABASE_URL: postgres://bank_d:pw_d@postgres-d:5432/bank
+
+  bank-coordinator:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: bank-coordinator
+    command: ["node", "src/coordinator/server.js"]
+    networks: [bank-net]
+    ports: ["8080:8080"]
+    restart: "no"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    depends_on:
+      bank-node-a:
+        condition: service_healthy
+      bank-node-b:
+        condition: service_healthy
+      bank-node-c:
+        condition: service_healthy
+      bank-node-d:
+        condition: service_healthy
+    environment:
+      PEERS: "a=http://bank-node-a:3000,b=http://bank-node-b:3000,c=http://bank-node-c:3000,d=http://bank-node-d:3000"
+      LB_ALGORITHM: round-robin
+
+  bank-cli:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: bank-cli
+    command: ["node", "src/cli/index.js"]
+    networks: [bank-net]
+    stdin_open: true
+    tty: true
+    profiles: ["cli"]
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    environment:
+      COORDINATOR_URL: "http://bank-coordinator:8080"
+      PEERS: "a=http://bank-node-a:3000,b=http://bank-node-b:3000,c=http://bank-node-c:3000,d=http://bank-node-d:3000"
+      DOCKER_CONTROL_ENABLED: "true"

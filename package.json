@@ -1,0 +1,21 @@
+{
+  "name": "distributed-banking-system",
+  "version": "1.0.0",
+  "description": "Real Distributed Banking System across four nodes and four PostgreSQL databases",
+  "main": "src/node/server.js",
+  "scripts": {
+    "test:unit": "node --test tests/unit/**/*.test.js",
+    "test:integration": "node --test tests/integration/**/*.test.js",
+    "test:acceptance": "node --test tests/acceptance/**/*.test.js",
+    "cli": "node src/cli/index.js",
+    "demo:reset": "node scripts/demo-reset.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "pg": "^8.12.0",
+    "pino": "^9.2.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
