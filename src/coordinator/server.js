@@ -8,7 +8,11 @@ const { callRpc } = require('../shared/rpc/client');
 
 const { LeaderTracker } = require('./leaderTracker');
 const { Gateway } = require('./gateway');
+const { TimeMaster } = require('./timeMaster');
 const { METHOD_NAMES } = require('../contracts/methods');
+const { physicalClock } = require('../clocks/physicalClock');
+const { lamportClock } = require('../clocks/lamportClock');
+const { queryEvents } = require('../shared/events');
 
 async function main() {
   const config = loadConfig();
@@ -21,6 +25,7 @@ async function main() {
 
   const leaderTracker = new LeaderTracker(config.peers);
   const gateway = new Gateway(leaderTracker, config);
+  const timeMaster = new TimeMaster(config.peers, config);
 
   const app = express();
   const rpcServer = new RpcServer();
@@ -30,6 +35,49 @@ async function main() {
       pong: true,
       service: 'coordinator',
       timestamp: Date.now()
+    };
+  });
+
+  // Clocks (Experiment 3)
+  rpcServer.register('clock.sync', async (params) => {
+    return timeMaster.runSync(params);
+  });
+
+  rpcServer.register('clock.get', async () => {
+    return {
+      nodeId: 'coordinator',
+      ...physicalClock.getTime(),
+      lamport: lamportClock.get()
+    };
+  });
+
+  rpcServer.register('clock.setOffset', async (params) => {
+    const clockInfo = physicalClock.setOffset(params.offsetMs, params.driftPpm || 0);
+    return {
+      nodeId: 'coordinator',
+      ...clockInfo,
+      lamport: lamportClock.get()
+    };
+  });
+
+  rpcServer.register('clock.adjust', async (params) => {
+    const adjustInfo = physicalClock.adjust(params.deltaMs);
+    return {
+      nodeId: 'coordinator',
+      ...adjustInfo,
+      lamport: lamportClock.get()
+    };
+  });
+
+  rpcServer.register('clock.events', async (params) => {
+    const events = await queryEvents({
+      requestId: params.requestId,
+      limit: params.limit || 100,
+      since: params.since
+    });
+    return {
+      nodeId: 'coordinator',
+      events
     };
   });
 

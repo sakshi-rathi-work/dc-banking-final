@@ -1,11 +1,37 @@
 // src/shared/rpc/client.js: HTTP JSON-RPC 2.0 Client
 const { formatRequest } = require('./envelope');
+const { createMeta } = require('./meta');
 const { RpcError, RpcTimeoutError, RpcNetworkError } = require('../../contracts/errors');
+const { physicalClock } = require('../../clocks/physicalClock');
+const { lamportClock } = require('../../clocks/lamportClock');
 
 async function callRpc(url, method, params = {}, options = {}) {
   const timeoutMs = options.timeoutMs || parseInt(process.env.RPC_TIMEOUT_MS || '2000', 10);
   const reqId = options.id || `req-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-  const payload = formatRequest(method, params, reqId);
+
+  // Stamp request with outgoing Lamport clock and Physical clock
+  // Send rule: L = L + 1
+  lamportClock.tick();
+  const currentLamport = lamportClock.get();
+  const currentPhysicalTs = physicalClock.now();
+
+  const reqMeta = (params && params._meta)
+    ? {
+        ...params._meta,
+        lamport: currentLamport,
+        physicalTs: currentPhysicalTs
+      }
+    : createMeta({
+        lamport: currentLamport,
+        physicalTs: currentPhysicalTs
+      });
+
+  const outgoingParams = {
+    ...params,
+    _meta: reqMeta
+  };
+
+  const payload = formatRequest(method, outgoingParams, reqId);
 
   let targetUrl = url;
   if (!targetUrl.endsWith('/rpc')) {
@@ -41,6 +67,14 @@ async function callRpc(url, method, params = {}, options = {}) {
     body = await response.json();
   } catch (err) {
     throw new RpcNetworkError(`Invalid JSON received from ${targetUrl} (${method}): ${err.message}`, err);
+  }
+
+  // Update client's Lamport clock upon receiving response
+  // Receive rule: L = max(L, msg.lamport) + 1
+  if (body.result && body.result._meta && body.result._meta.lamport !== undefined) {
+    lamportClock.update(body.result._meta.lamport);
+  } else if (body.error && body.error.data && body.error.data._meta && body.error.data._meta.lamport !== undefined) {
+    lamportClock.update(body.error.data._meta.lamport);
   }
 
   if (body.error) {

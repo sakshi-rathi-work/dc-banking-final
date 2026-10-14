@@ -323,7 +323,7 @@ Each phase is executed strictly in sequential order. Phase $N+1$ will never comm
 
 ---
 
-### Phase 4: Physical & Logical Clocks (Experiment 3)
+### Phase 4: Physical & Logical Clocks (Experiment 3) [COMPLETED]
 **Focus:** Application-managed physical clocks with drift and offset, Berkeley clock synchronization, Lamport logical clocks, causal event ordering.
 
 #### Tasks & Deliverables
@@ -338,9 +338,9 @@ Each phase is executed strictly in sequential order. Phase $N+1$ will never comm
      - Send: $L = L + 1$; attaches $L$ to `_meta.lamport`.
      - Receive: $L = \max(L, L_{\text{msg}}) + 1$.
 3. **Clock Interceptors & Event Log:**
-   - Stamp all incoming and outgoing RPC envelopes with Lamport and physical timestamps.
-   - Record all domain and protocol events into `event_log` table with both timestamps.
-   - Record `lamport_ts` and `physical_ts_ms` into `transactions` and `replication_log` at commit.
+   - Stamp all incoming and outgoing RPC envelopes with Lamport and physical timestamps in `src/shared/rpc/server.js`, `src/shared/rpc/client.js`, and `src/shared/rpc/meta.js`.
+   - Record domain and protocol events (`rpc.received`, `db.commit`, `clock.set_offset`, `clock.adjust`, `clock.sync`) into `event_log` table via `src/shared/events.js`.
+   - Record `lamport_ts` and `physical_ts_ms` into `transactions` and `replication_log` at commit via `src/txn/logWriter.js` and `src/txn/executor.js`.
 4. **Berkeley Synchronization Algorithm:**
    - `src/coordinator/timeMaster.js` & `src/clocks/berkeley.js`:
      - Coordinator polls `clock.get` from all reachable nodes, measuring RTT.
@@ -349,17 +349,22 @@ Each phase is executed strictly in sequential order. Phase $N+1$ will never comm
      - Computes group average offset including master.
      - Sends `clock.adjust` to all nodes with respective deltas.
      - Queries post-sync times to verify residual spread $\le$ network RTT.
-5. **RPC Endpoints:**
-   - Node: `clock.get`, `clock.setOffset`, `clock.adjust`, `clock.events`.
-   - Coordinator: `clock.sync`.
-6. **Testing:**
-   - Unit tests: Lamport clock increments and receipt max; Berkeley calculation math.
-   - Integration test: `tests/integration/phase4.test.js`.
+5. **Causal Event Ordering & CLI:**
+   - `src/clocks/ordering.js`: checks physical vs Lamport event ordering and detects causal violations.
+   - `src/cli/render.js` & `src/cli/index.js`: non-interactive `cli clocks view`, `cli clocks sync`, `cli clocks set`, `cli clocks order` commands.
+6. **RPC Endpoints:**
+   - Node: `clock.get`, `clock.setOffset`, `clock.adjust`, `clock.events` in `src/node/methods/clock.js`.
+   - Coordinator: `clock.sync`, `clock.get`, `clock.events`, `clock.setOffset`, `clock.adjust` in `src/coordinator/server.js`.
+7. **Testing:**
+   - Unit tests: `tests/unit/clocks.test.js` (31/31 unit tests pass).
+   - Integration tests: `tests/integration/phase4.test.js` (6/6 pass; full integration suite 36/36 pass).
 
-#### Exit Criteria
-- Injecting $+2500$ ms offset into Node A shifts subsequent transaction `physical_ts_ms` by $\approx 2500$ ms.
-- Berkeley sync reduces cluster time spread from seconds to $< 10$ ms.
-- Side-by-side ordering comparison under skew demonstrates $\ge 1$ causal violation in physical timestamp order, and exactly 0 violations in Lamport order.
+#### Exit Criteria Verified
+- Injected $+2500$ ms offset into Node A shifted subsequent transaction `physical_ts_ms` by $\approx 2500$ ms.
+- Injected $-1800$ ms offset into Node B produced `event_log` entries carrying Node B's negative offset.
+- Berkeley sync reduced cluster time spread from $> 4000$ ms to $< 10$ ms.
+- Side-by-side ordering comparison under skew demonstrated $\ge 1$ causal violation in physical timestamp order, and strictly 0 violations in Lamport order.
+- Invariants I1–I12 verified passing across cluster after clock sync.
 
 ---
 

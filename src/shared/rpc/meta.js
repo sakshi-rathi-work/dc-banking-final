@@ -1,12 +1,14 @@
 // src/shared/rpc/meta.js: Metadata and distributed tracing utilities
 const crypto = require('crypto');
+const { physicalClock } = require('../../clocks/physicalClock');
+const { lamportClock } = require('../../clocks/lamportClock');
 
 function createMeta(options = {}) {
   return {
-    from: options.from || process.env.NODE_ID || 'coordinator',
+    from: options.from || (process.env.NODE_ID ? `node-${process.env.NODE_ID}` : 'coordinator'),
     traceId: options.traceId || `trc-${crypto.randomUUID().slice(0, 8)}`,
-    lamport: options.lamport || 0,
-    physicalTs: options.physicalTs || Date.now(),
+    lamport: options.lamport !== undefined ? options.lamport : lamportClock.get(),
+    physicalTs: options.physicalTs !== undefined ? options.physicalTs : physicalClock.now(),
     epoch: options.epoch !== undefined ? options.epoch : 0,
     trace: options.trace ? [...options.trace] : []
   };
@@ -26,7 +28,7 @@ function appendTrace(meta, eventName, dtMs = 0, nodeOverride = null) {
   meta.trace.push({
     node,
     event: eventName,
-    lamport: meta.lamport || 0,
+    lamport: lamportClock.get(),
     dtMs: Math.round(dtMs * 100) / 100
   });
 }

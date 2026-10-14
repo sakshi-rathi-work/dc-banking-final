@@ -3,32 +3,133 @@ const crypto = require('crypto');
 const { callRpc } = require('../shared/rpc/client');
 const { loadConfig } = require('../shared/config');
 const { createMeta, appendTrace } = require('../shared/rpc/meta');
-const { renderTrace, renderRpcResult } = require('./render');
+const {
+  renderTrace,
+  renderRpcResult,
+  renderClocksTable,
+  renderBerkeleySync,
+  renderEventOrdering
+} = require('./render');
+const { compareEventOrdering } = require('../clocks/ordering');
 
-async function handleRpcCommand(args, config) {
-  let targetUrl = config.coordinatorUrl;
-  let directNode = null;
+function resolveNodeUrl(nodeId, config) {
   const peers = Object.keys(config.peers).length > 0 ? config.peers : {
     a: { nodeId: 'a', url: 'http://localhost:3001' },
     b: { nodeId: 'b', url: 'http://localhost:3002' },
     c: { nodeId: 'c', url: 'http://localhost:3003' },
     d: { nodeId: 'd', url: 'http://localhost:3004' }
   };
+  const peer = peers[nodeId.toLowerCase()];
+  if (!peer) return null;
+  let targetUrl = peer.url;
+  if (targetUrl.includes('bank-node-') && !process.env.HOSTNAME?.startsWith('bank-')) {
+    const portMap = { a: 3001, b: 3002, c: 3003, d: 3004 };
+    targetUrl = `http://localhost:${portMap[nodeId.toLowerCase()] || 3001}`;
+  }
+  return targetUrl;
+}
+
+async function handleClocksCommand(args, config) {
+  const sub = args[0] || 'view';
+
+  if (sub === 'view') {
+    const clocks = [];
+    const nodeIds = ['a', 'b', 'c', 'd'];
+
+    for (const nid of nodeIds) {
+      const url = resolveNodeUrl(nid, config);
+      try {
+        const c = await callRpc(url, 'clock.get', {}, { timeoutMs: 1500 });
+        clocks.push(c);
+      } catch (err) {
+        clocks.push({ nodeId: nid, offsetMs: 'ERR', physicalTs: 0, iso: 'UNREACHABLE', lamport: '?' });
+      }
+    }
+
+    try {
+      const coordClock = await callRpc(config.coordinatorUrl, 'clock.get', {}, { timeoutMs: 1500 });
+      clocks.push({ nodeId: 'coord', ...coordClock });
+    } catch (err) {
+      clocks.push({ nodeId: 'coord', offsetMs: 'ERR', physicalTs: 0, iso: 'UNREACHABLE', lamport: '?' });
+    }
+
+    console.log('CLOCKS > View Clocks');
+    console.log(renderClocksTable(clocks));
+  } else if (sub === 'sync') {
+    const outlierMs = args[1] ? Number(args[1]) : undefined;
+    try {
+      const report = await callRpc(config.coordinatorUrl, 'clock.sync', { outlierMs }, { timeoutMs: 5000 });
+      console.log('CLOCKS > Synchronize (Berkeley)');
+      console.log(renderBerkeleySync(report));
+    } catch (err) {
+      console.error('Berkeley sync failed:', err.message);
+      process.exit(1);
+    }
+  } else if (sub === 'set') {
+    const targetNode = args[1];
+    const offsetMs = Number(args[2]);
+    const driftPpm = args[3] ? Number(args[3]) : 0;
+
+    if (!targetNode || isNaN(offsetMs)) {
+      console.error('Usage: cli clocks set <nodeId> <offsetMs> [driftPpm]');
+      process.exit(1);
+    }
+
+    const url = targetNode.toLowerCase() === 'coordinator' || targetNode.toLowerCase() === 'coord'
+      ? config.coordinatorUrl
+      : resolveNodeUrl(targetNode, config);
+
+    try {
+      const res = await callRpc(url, 'clock.setOffset', { offsetMs, driftPpm }, { timeoutMs: 2000 });
+      console.log(`Node ${targetNode} clock offset set to ${offsetMs} ms (drift: ${driftPpm} ppm)`);
+      console.log(`Current physicalTs: ${res.physicalTs} (${res.iso})`);
+    } catch (err) {
+      console.error(`Failed to set offset on ${targetNode}:`, err.message);
+      process.exit(1);
+    }
+  } else if (sub === 'order') {
+    const reqId = args[1];
+    const events = [];
+    const nodeIds = ['a', 'b', 'c', 'd'];
+
+    for (const nid of nodeIds) {
+      const url = resolveNodeUrl(nid, config);
+      try {
+        const res = await callRpc(url, 'clock.events', { requestId: reqId, limit: 50 }, { timeoutMs: 1500 });
+        for (const ev of (res.events || [])) {
+          events.push({
+            node: nid,
+            event: ev.event_type,
+            physicalTs: ev.physical_ts,
+            lamport: ev.lamport,
+            id: ev.id
+          });
+        }
+      } catch (err) {
+        // ignore
+      }
+    }
+
+    const orderingReport = compareEventOrdering(events);
+    console.log(renderEventOrdering(orderingReport, reqId || 'All Recent Events'));
+  } else {
+    console.error(`Unknown clocks subcommand: ${sub}. Use: view, sync, set, order`);
+    process.exit(1);
+  }
+}
+
+async function handleRpcCommand(args, config) {
+  let targetUrl = config.coordinatorUrl;
+  let directNode = null;
 
   // Check for --node=a flag
   const remainingArgs = [];
   for (const arg of args) {
     if (arg.startsWith('--node=')) {
       directNode = arg.split('=')[1].toLowerCase();
-      if (peers[directNode]) {
-        targetUrl = peers[directNode].url;
-        // When running on host outside Docker network, map to host port (3001..3004)
-        if (targetUrl.includes('bank-node-') && !process.env.HOSTNAME?.startsWith('bank-')) {
-          const portMap = { a: 3001, b: 3002, c: 3003, d: 3004 };
-          targetUrl = `http://localhost:${portMap[directNode] || 3001}`;
-        }
-      } else {
-        console.error(`Unknown node "${directNode}". Available: ${Object.keys(peers).join(', ')}`);
+      targetUrl = resolveNodeUrl(directNode, config);
+      if (!targetUrl) {
+        console.error(`Unknown node "${directNode}".`);
         process.exit(1);
       }
     } else {
@@ -140,6 +241,11 @@ async function main() {
     return;
   }
 
+  if (args[0] === 'clocks') {
+    await handleClocksCommand(args.slice(1), config);
+    return;
+  }
+
   // Default status dump
   console.log('=========================================');
   console.log('       DISTRIBUTED BANKING SYSTEM        ');
@@ -164,4 +270,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, handleRpcCommand };
+module.exports = { main, handleRpcCommand, handleClocksCommand };

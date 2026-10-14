@@ -1,6 +1,10 @@
 // src/txn/logWriter.js: LSN allocation, hash chaining, and replication_log writing inside transaction
+// Specification: PROJECT.md Section 17.1, Section 17.3, Section 19.2
 const { computeEntryHash } = require('../domain/invariants');
 const { RpcError, ERROR_CODES } = require('../contracts/errors');
+const { physicalClock } = require('../clocks/physicalClock');
+const { lamportClock } = require('../clocks/lamportClock');
+const { recordEvent } = require('../shared/events');
 
 async function writeLogEntry(client, { entryType, txnId = null, payload, meta = {} }) {
   // 1. Lock node_state row 1 to serialize LSN allocation and fence leadership
@@ -37,9 +41,23 @@ async function writeLogEntry(client, { entryType, txnId = null, payload, meta = 
   const prevHash = state.last_hash || '';
   const originNode = state.node_id;
 
+  // Local event (DB commit): value += 1 (PROJECT.md Section 17.3)
+  lamportClock.tick();
+  const lamport = lamportClock.get();
+  // Application physical clock on this primary node (PROJECT.md Section 17.1)
+  const physicalTs = physicalClock.now();
+
   const safeMeta = meta || {};
-  const lamport = safeMeta.lamport !== undefined ? Number(safeMeta.lamport) : 0;
-  const physicalTs = safeMeta.physicalTs !== undefined ? Number(safeMeta.physicalTs) : Date.now();
+  const requestId = safeMeta.traceId || safeMeta.requestId || (payload && payload.txn && payload.txn.requestId) || null;
+
+  // Record db.commit event in event_log inside the SQL transaction
+  await recordEvent({
+    eventType: 'db.commit',
+    requestId,
+    txnId,
+    client,
+    detail: { lsn, epoch, entryType }
+  });
 
   const entryHash = computeEntryHash(prevHash, lsn, epoch, payload);
 
