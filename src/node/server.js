@@ -9,6 +9,8 @@ const { initNodeState, getNodeState } = require('./state');
 const { FailureDetector } = require('../election/failureDetector');
 const { RpcServer } = require('../shared/rpc/server');
 const { registerClusterMethods } = require('./methods/cluster');
+const { registerBankMethods } = require('./methods/bank');
+const { registerAdminMethods } = require('./methods/admin');
 
 async function main() {
   const config = loadConfig();
@@ -58,6 +60,8 @@ async function main() {
   const rpcServer = new RpcServer();
 
   registerClusterMethods(rpcServer, failureDetector, config);
+  registerBankMethods(rpcServer, config);
+  registerAdminMethods(rpcServer, config);
 
   // Mount JSON-RPC handler at POST /rpc
   app.use(rpcServer.createMiddleware());
