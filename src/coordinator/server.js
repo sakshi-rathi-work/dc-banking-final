@@ -66,9 +66,9 @@ async function main() {
     return gateway.handleCall(method, innerParams, meta);
   });
 
-  // Direct banking and admin calls proxied through gateway
+  // Direct banking, admin, and worker calls proxied through gateway
   for (const method of Object.values(METHOD_NAMES)) {
-    if (method.startsWith('bank.') || method.startsWith('admin.')) {
+    if (method.startsWith('bank.') || method.startsWith('admin.') || method.startsWith('worker.')) {
       rpcServer.register(method, async (params, meta) => {
         return gateway.handleCall(method, params, meta);
       });

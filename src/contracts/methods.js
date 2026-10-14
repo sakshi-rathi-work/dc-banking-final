@@ -30,6 +30,10 @@ const METHOD_NAMES = {
   ADMIN_VERIFY_INVARIANTS: 'admin.verifyInvariants',
   ADMIN_STATE_CHECKSUM: 'admin.stateChecksum',
 
+  // Worker & Multithreading
+  WORKER_RUN_BATCH: 'worker.runBatch',
+  WORKER_GET_ACTIVITY: 'worker.getActivity',
+
   // Gateway
   GATEWAY_CALL: 'gateway.call',
   GATEWAY_CLUSTER_STATUS: 'gateway.clusterStatus'
@@ -77,6 +81,15 @@ function validateMethodParams(method, params = {}) {
     case METHOD_NAMES.CLUSTER_SET_FAULT:
       if (!params.knob || typeof params.knob !== 'string') {
         throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'Missing fault knob name');
+      }
+      break;
+
+    case METHOD_NAMES.WORKER_RUN_BATCH:
+      if (!params.scenario && (!Array.isArray(params.operations) || params.operations.length === 0)) {
+        throw new RpcError(
+          ERROR_CODES.INVALID_PARAMS,
+          'worker.runBatch requires either a valid "scenario" string or a non-empty "operations" array'
+        );
       }
       break;
 

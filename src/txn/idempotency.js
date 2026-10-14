@@ -7,6 +7,8 @@ function hashRequestParams(operation, params) {
   const cleanParams = { ...params };
   delete cleanParams._meta;
   delete cleanParams.idempotencyKey;
+  delete cleanParams.taskId;
+  delete cleanParams.requestId;
   const canonical = canonicalJSON({ op: operation, params: cleanParams });
   return crypto.createHash('sha256').update(canonical).digest('hex');
 }

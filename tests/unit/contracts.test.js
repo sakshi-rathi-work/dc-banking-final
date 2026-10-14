@@ -80,4 +80,25 @@ describe('Contracts and Parameter Validation', () => {
       });
     });
   });
+
+  it('validates worker.runBatch params', () => {
+    // Valid with scenario
+    assert.doesNotThrow(() => {
+      validateMethodParams(METHOD_NAMES.WORKER_RUN_BATCH, {
+        scenario: 'parallel-withdrawals'
+      });
+    });
+
+    // Valid with operations array
+    assert.doesNotThrow(() => {
+      validateMethodParams(METHOD_NAMES.WORKER_RUN_BATCH, {
+        operations: [{ type: 'deposit', accountId: 'ACC-0001', amount: '100.00' }]
+      });
+    });
+
+    // Invalid: neither scenario nor operations
+    assert.throws(() => {
+      validateMethodParams(METHOD_NAMES.WORKER_RUN_BATCH, {});
+    }, (err) => err instanceof RpcError && err.code === ERROR_CODES.INVALID_PARAMS);
+  });
 });

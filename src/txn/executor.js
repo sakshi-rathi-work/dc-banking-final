@@ -230,13 +230,24 @@ async function handleDeposit(client, params, meta, idempotencyKey) {
   const txnId = crypto.randomUUID();
   const requestId = meta.traceId || `req-${Date.now()}`;
 
-  // Lock account FOR UPDATE
+  // Lock account FOR UPDATE with contention timing
+  const tLock0 = process.hrtime();
   const accRes = await client.query(`
     SELECT account_id, holder_name, status, balance, version
     FROM accounts
     WHERE account_id = $1
     FOR UPDATE;
   `, [accountId]);
+  const [sLock, nsLock] = process.hrtime(tLock0);
+  const lockWaitMs = Math.round((sLock * 1000 + nsLock / 1e6) * 100) / 100;
+
+  if (meta && meta.holdAfterLockMs && meta.holdAfterLockMs > 0) {
+    await new Promise(r => setTimeout(r, meta.holdAfterLockMs));
+  }
+
+  if (meta && meta.workerCrashOnTask && meta.taskId === meta.workerCrashOnTask) {
+    process.exit(1);
+  }
 
   if (accRes.rows.length === 0) {
     throw new RpcError(ERROR_CODES.ACCOUNT_NOT_FOUND, `Account not found: ${accountId}`);
@@ -328,7 +339,8 @@ async function handleDeposit(client, params, meta, idempotencyKey) {
     epoch: log.epoch,
     balance: newBalance,
     durability: 'LOCAL',
-    duplicate: false
+    duplicate: false,
+    lockWaitMs
   };
 
   await storeIdempotencyResult(client, idempotencyKey, result, log.lsn);
@@ -341,13 +353,24 @@ async function handleWithdraw(client, params, meta, idempotencyKey) {
   const txnId = crypto.randomUUID();
   const requestId = meta.traceId || `req-${Date.now()}`;
 
-  // Lock account FOR UPDATE
+  // Lock account FOR UPDATE with contention timing
+  const tLock0 = process.hrtime();
   const accRes = await client.query(`
     SELECT account_id, holder_name, status, balance, version
     FROM accounts
     WHERE account_id = $1
     FOR UPDATE;
   `, [accountId]);
+  const [sLock, nsLock] = process.hrtime(tLock0);
+  const lockWaitMs = Math.round((sLock * 1000 + nsLock / 1e6) * 100) / 100;
+
+  if (meta && meta.holdAfterLockMs && meta.holdAfterLockMs > 0) {
+    await new Promise(r => setTimeout(r, meta.holdAfterLockMs));
+  }
+
+  if (meta && meta.workerCrashOnTask && meta.taskId === meta.workerCrashOnTask) {
+    process.exit(1);
+  }
 
   if (accRes.rows.length === 0) {
     throw new RpcError(ERROR_CODES.ACCOUNT_NOT_FOUND, `Account not found: ${accountId}`);
@@ -407,7 +430,8 @@ async function handleWithdraw(client, params, meta, idempotencyKey) {
       epoch: log.epoch,
       balance: account.balance,
       durability: 'LOCAL',
-      duplicate: false
+      duplicate: false,
+      lockWaitMs
     };
 
     await storeIdempotencyResult(client, idempotencyKey, rejectResult, log.lsn);
@@ -492,7 +516,8 @@ async function handleWithdraw(client, params, meta, idempotencyKey) {
     epoch: log.epoch,
     balance: newBalance,
     durability: 'LOCAL',
-    duplicate: false
+    duplicate: false,
+    lockWaitMs
   };
 
   await storeIdempotencyResult(client, idempotencyKey, result, log.lsn);
@@ -513,6 +538,7 @@ async function handleTransfer(client, params, meta, idempotencyKey) {
 
   // Lock both accounts in strictly ascending account_id order to prevent deadlocks
   const sortedIds = [fromAccountId, toAccountId].sort();
+  const tLock0 = process.hrtime();
   const accRes = await client.query(`
     SELECT account_id, holder_name, status, balance, version
     FROM accounts
@@ -520,6 +546,16 @@ async function handleTransfer(client, params, meta, idempotencyKey) {
     ORDER BY account_id ASC
     FOR UPDATE;
   `, [sortedIds]);
+  const [sLock, nsLock] = process.hrtime(tLock0);
+  const lockWaitMs = Math.round((sLock * 1000 + nsLock / 1e6) * 100) / 100;
+
+  if (meta && meta.holdAfterLockMs && meta.holdAfterLockMs > 0) {
+    await new Promise(r => setTimeout(r, meta.holdAfterLockMs));
+  }
+
+  if (meta && meta.workerCrashOnTask && meta.taskId === meta.workerCrashOnTask) {
+    process.exit(1);
+  }
 
   if (accRes.rows.length < 2) {
     throw new RpcError(ERROR_CODES.ACCOUNT_NOT_FOUND, 'One or both transfer accounts do not exist');
@@ -585,7 +621,8 @@ async function handleTransfer(client, params, meta, idempotencyKey) {
       epoch: log.epoch,
       balance: fromAcc.balance,
       durability: 'LOCAL',
-      duplicate: false
+      duplicate: false,
+      lockWaitMs
     };
 
     await storeIdempotencyResult(client, idempotencyKey, rejectResult, log.lsn);
@@ -697,7 +734,8 @@ async function handleTransfer(client, params, meta, idempotencyKey) {
     fromBalance: fromBalanceAfter,
     toBalance: toBalanceAfter,
     durability: 'LOCAL',
-    duplicate: false
+    duplicate: false,
+    lockWaitMs
   };
 
   await storeIdempotencyResult(client, idempotencyKey, result, log.lsn);

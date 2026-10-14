@@ -11,6 +11,7 @@ const { RpcServer } = require('../shared/rpc/server');
 const { registerClusterMethods } = require('./methods/cluster');
 const { registerBankMethods } = require('./methods/bank');
 const { registerAdminMethods } = require('./methods/admin');
+const { registerWorkerMethods } = require('./methods/worker');
 
 async function main() {
   const config = loadConfig();
@@ -62,6 +63,7 @@ async function main() {
   registerClusterMethods(rpcServer, failureDetector, config);
   registerBankMethods(rpcServer, config);
   registerAdminMethods(rpcServer, config);
+  registerWorkerMethods(rpcServer, config);
 
   // Mount JSON-RPC handler at POST /rpc
   app.use(rpcServer.createMiddleware());

@@ -9,7 +9,8 @@ const MUTATING_METHODS = new Set([
   'bank.createAccount',
   'bank.deposit',
   'bank.withdraw',
-  'bank.transfer'
+  'bank.transfer',
+  'worker.runBatch'
 ]);
 
 class Gateway {
