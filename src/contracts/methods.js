@@ -41,6 +41,15 @@ const METHOD_NAMES = {
   CLOCK_EVENTS: 'clock.events',
   CLOCK_SYNC: 'clock.sync',
 
+  // Replication (Experiment 5)
+  REPLICATION_APPEND: 'replication.append',
+  REPLICATION_FETCH: 'replication.fetch',
+  REPLICATION_HASH_AT: 'replication.hashAt',
+  REPLICATION_STATUS: 'replication.status',
+  REPLICATION_LEADER_STATUS: 'replication.leaderStatus',
+  REPLICATION_SET_MODE: 'replication.setMode',
+  REPLICATION_RESEND: 'replication.resend',
+
   // Gateway
   GATEWAY_CALL: 'gateway.call',
   GATEWAY_CLUSTER_STATUS: 'gateway.clusterStatus'
@@ -118,6 +127,48 @@ function validateMethodParams(method, params = {}) {
     case METHOD_NAMES.CLOCK_SYNC:
       if (params.outlierMs !== undefined && (typeof params.outlierMs !== 'number' || isNaN(params.outlierMs))) {
         throw new RpcError(ERROR_CODES.INVALID_PARAMS, '"outlierMs" must be a number');
+      }
+      break;
+
+    case METHOD_NAMES.REPLICATION_APPEND:
+      if (params.epoch === undefined || typeof params.epoch !== 'number') {
+        throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'replication.append requires numeric "epoch"');
+      }
+      if (!params.leaderId || typeof params.leaderId !== 'string') {
+        throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'replication.append requires string "leaderId"');
+      }
+      if (!Array.isArray(params.entries)) {
+        throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'replication.append requires "entries" array');
+      }
+      break;
+
+    case METHOD_NAMES.REPLICATION_FETCH:
+      if (params.fromLsn === undefined || typeof params.fromLsn !== 'number' || params.fromLsn < 0) {
+        throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'replication.fetch requires non-negative numeric "fromLsn"');
+      }
+      break;
+
+    case METHOD_NAMES.REPLICATION_HASH_AT:
+      if (params.lsn === undefined || typeof params.lsn !== 'number' || params.lsn < 0) {
+        throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'replication.hashAt requires non-negative numeric "lsn"');
+      }
+      break;
+
+    case METHOD_NAMES.REPLICATION_SET_MODE:
+      if (!params.mode || (params.mode !== 'SYNC' && params.mode !== 'ASYNC')) {
+        throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'replication.setMode requires mode to be "SYNC" or "ASYNC"');
+      }
+      if (params.syncAcks !== undefined && (typeof params.syncAcks !== 'number' || params.syncAcks < 1)) {
+        throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'syncAcks must be an integer >= 1');
+      }
+      break;
+
+    case METHOD_NAMES.REPLICATION_RESEND:
+      if (!params.toPeer || typeof params.toPeer !== 'string') {
+        throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'replication.resend requires string "toPeer"');
+      }
+      if (typeof params.fromLsn !== 'number' || typeof params.toLsn !== 'number' || params.fromLsn > params.toLsn) {
+        throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'Invalid fromLsn/toLsn range for resend');
       }
       break;
 

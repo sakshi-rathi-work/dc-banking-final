@@ -166,5 +166,6 @@ module.exports = {
   canonicalJSON,
   computeEntryHash,
   getStateChecksum,
+  computeStateChecksum: getStateChecksum,
   verifyInvariants
 };

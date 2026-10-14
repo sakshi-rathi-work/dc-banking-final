@@ -7,7 +7,7 @@ async function initNodeState(nodeId, isBootstrapPrimary) {
     return existing.rows[0];
   }
 
-  const role = (nodeId === 'a' || isBootstrapPrimary) ? 'primary' : 'replica';
+  const role = (nodeId === 'a' || isBootstrapPrimary) ? 'primary' : (nodeId === 'b' ? 'backup' : 'replica');
   const epoch = 1;
   const leaderId = 'a';
   const backupId = 'b';

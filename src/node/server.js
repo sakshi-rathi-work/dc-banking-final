@@ -6,13 +6,15 @@ const { logger } = require('../shared/logger');
 const { runMigrations } = require('../shared/db/migrate');
 const { closePool, query } = require('../shared/db/pool');
 const { initNodeState, getNodeState } = require('./state');
-const { FailureDetector } = require('../election/failureDetector');
+const { FailureDetector, setFailureDetector } = require('../election/failureDetector');
+const { initLeaderReplicator } = require('../replication/leaderReplicator');
 const { RpcServer } = require('../shared/rpc/server');
 const { registerClusterMethods } = require('./methods/cluster');
 const { registerBankMethods } = require('./methods/bank');
 const { registerAdminMethods } = require('./methods/admin');
 const { registerWorkerMethods } = require('./methods/worker');
 const { registerClockMethods } = require('./methods/clock');
+const { registerReplicationMethods } = require('./methods/replication');
 
 async function main() {
   const config = loadConfig();
@@ -49,6 +51,7 @@ async function main() {
 
   // 3. Initialize Failure Detector
   const failureDetector = new FailureDetector(config);
+  setFailureDetector(failureDetector);
   try {
     await failureDetector.init();
     failureDetector.start();
@@ -57,7 +60,20 @@ async function main() {
     logger.error({ event: 'failure_detector.init_error', error: err.message });
   }
 
-  // 4. Create Express app & RPC Server
+  // 4. Initialize Leader Replicator
+  const leaderReplicator = initLeaderReplicator(config, failureDetector);
+  try {
+    await leaderReplicator.init();
+    const curState = await getNodeState();
+    if (curState.role === 'primary') {
+      leaderReplicator.start();
+      logger.info({ event: 'leader_replicator.started' });
+    }
+  } catch (err) {
+    logger.error({ event: 'leader_replicator.init_error', error: err.message });
+  }
+
+  // 5. Create Express app & RPC Server
   const app = express();
   const rpcServer = new RpcServer();
 
@@ -66,6 +82,7 @@ async function main() {
   registerAdminMethods(rpcServer, config);
   registerWorkerMethods(rpcServer, config);
   registerClockMethods(rpcServer, config);
+  registerReplicationMethods(rpcServer, config);
 
   // Mount JSON-RPC handler at POST /rpc
   app.use(rpcServer.createMiddleware());

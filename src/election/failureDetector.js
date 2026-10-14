@@ -195,8 +195,55 @@ class FailureDetector {
     }
     return peers;
   }
+
+  async checkHealthyReplicas(backupId = 'b', syncAcks = 2) {
+    const peers = await this.getPeerStates();
+    const backupPeer = peers[backupId];
+    const isBackupAlive = Boolean(backupPeer && backupPeer.status === 'alive');
+
+    let aliveOtherFollowers = 0;
+    for (const [pId, p] of Object.entries(peers)) {
+      if (pId !== this.nodeId && pId !== backupId && p.status === 'alive') {
+        aliveOtherFollowers++;
+      }
+    }
+
+    const requiredOtherFollowers = Math.max(1, Number(syncAcks) - 1);
+    const sufficient = Boolean(isBackupAlive && (aliveOtherFollowers >= requiredOtherFollowers));
+
+    return {
+      sufficient,
+      isBackupAlive,
+      aliveOtherFollowers,
+      requiredOtherFollowers,
+      backupId,
+      syncAcks
+    };
+  }
+
+  async markSuspected(peerId, suspected = true) {
+    const mem = this.peerMemoryState.get(peerId);
+    if (mem) {
+      mem.suspected = suspected;
+      if (suspected) mem.lastSeenAt = 0;
+    }
+    await query('UPDATE cluster_nodes SET suspected = $1 WHERE node_id = $2', [suspected, peerId]);
+  }
+}
+
+let failureDetectorInstance = null;
+
+function setFailureDetector(instance) {
+  failureDetectorInstance = instance;
+}
+
+function getFailureDetector() {
+  return failureDetectorInstance;
 }
 
 module.exports = {
-  FailureDetector
+  FailureDetector,
+  setFailureDetector,
+  getFailureDetector
 };
+

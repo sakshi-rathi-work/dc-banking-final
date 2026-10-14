@@ -9,9 +9,44 @@ const { validateAccountId, validateHolderName, validateAmount, validateIdempoten
 const { compareMoney } = require('../domain/money');
 const { RpcError, ERROR_CODES } = require('../contracts/errors');
 const { appendTrace } = require('../shared/rpc/meta');
+const { getLeaderReplicator } = require('../replication/leaderReplicator');
+const { getFailureDetector } = require('../election/failureDetector');
 
 async function executeBankOperation(operation, params, meta = {}, customClient = null) {
   const pool = getPool();
+
+  // Pre-check for SYNC replication mode before any transaction or state change (Section 19.5)
+  const stateRes = await pool.query('SELECT role, epoch, backup_id, sync_acks, replication_mode, durable_lsn FROM node_state WHERE id = 1');
+  const nodeState = stateRes.rows[0] || {};
+  const isSync = nodeState.replication_mode === 'SYNC';
+
+  if (isSync && (nodeState.role === 'primary' || !nodeState.role)) {
+    const fd = getFailureDetector();
+    if (fd) {
+      const health = await fd.checkHealthyReplicas(nodeState.backup_id || 'b', nodeState.sync_acks || 2);
+      if (!health.sufficient) {
+        throw new RpcError(
+          ERROR_CODES.INSUFFICIENT_REPLICAS,
+          'SYNC mode pre-check failed: insufficient healthy replicas',
+          health
+        );
+      }
+    } else {
+      const peersRes = await pool.query('SELECT node_id, suspected FROM cluster_nodes');
+      const backupId = nodeState.backup_id || 'b';
+      const backupRow = peersRes.rows.find(r => r.node_id === backupId);
+      const isBackupAlive = backupRow && !backupRow.suspected;
+      const otherAlive = peersRes.rows.filter(r => r.node_id !== 'a' && r.node_id !== backupId && !r.suspected).length;
+      const reqOther = Math.max(1, (Number(nodeState.sync_acks) || 2) - 1);
+      if (!isBackupAlive || otherAlive < reqOther) {
+        throw new RpcError(
+          ERROR_CODES.INSUFFICIENT_REPLICAS,
+          'SYNC mode pre-check failed: insufficient healthy replicas'
+        );
+      }
+    }
+  }
+
   const client = customClient || await pool.connect();
   const shouldRelease = !customClient;
 
@@ -35,6 +70,19 @@ async function executeBankOperation(operation, params, meta = {}, customClient =
           { ...stored, duplicate: true }
         );
       }
+
+      // If SYNC mode, verify durable_lsn has caught up to stored.lsn
+      if (isSync && stored && stored.lsn) {
+        const leaderReplicator = getLeaderReplicator();
+        if (leaderReplicator && leaderReplicator.ackTracker) {
+          if (leaderReplicator.ackTracker.durableLsn < stored.lsn) {
+            await leaderReplicator.replicateNow();
+            await leaderReplicator.ackTracker.awaitDurability(stored.lsn, 3000, stored.txnId);
+          }
+          stored.durability = 'QUORUM';
+        }
+      }
+
       return {
         ...stored,
         duplicate: true
@@ -64,6 +112,29 @@ async function executeBankOperation(operation, params, meta = {}, customClient =
     await client.query('COMMIT');
     if (meta && meta.trace) {
       appendTrace(meta, 'db.commit');
+    }
+
+    // Replication handling after commit
+    if (result && result.lsn) {
+      const leaderReplicator = getLeaderReplicator();
+      if (leaderReplicator) {
+        leaderReplicator.ackTracker.setLeaderLastLsn(result.lsn);
+        leaderReplicator.replicateNow();
+
+        if (isSync) {
+          await leaderReplicator.ackTracker.awaitDurability(result.lsn, 3000, result.txnId);
+          result.durability = 'QUORUM';
+          await pool.query(`
+            UPDATE idempotency_keys
+            SET result = jsonb_set(result, '{durability}', '"QUORUM"')
+            WHERE key = $1;
+          `, [key]).catch(() => {});
+        } else {
+          result.durability = 'LOCAL';
+        }
+      } else {
+        result.durability = isSync ? 'QUORUM' : 'LOCAL';
+      }
     }
 
     if (result && result.status === 'REJECTED') {

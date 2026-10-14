@@ -40,8 +40,79 @@ function registerBankMethods(rpcServer, config) {
     return executeBankOperation('transfer', params, meta);
   });
 
+  // Read Consistency Enforcement (PROJECT.md Section 19.7)
+  async function checkReadConsistency(params) {
+    let state = await getNodeState();
+    if (state.role === 'recovering') {
+      throw new RpcError(ERROR_CODES.NODE_RECOVERING, 'Node is in recovering state');
+    }
+
+    // 1. minLsn (read-your-writes): waits up to 1000 ms
+    if (params && params.minLsn !== undefined && params.minLsn !== null) {
+      const minLsn = Number(params.minLsn);
+      const startWait = Date.now();
+      while (Number(state.last_lsn) < minLsn) {
+        if (Date.now() - startWait >= 1000) {
+          throw new RpcError(ERROR_CODES.READ_TOO_STALE, `Node ${config.nodeId} applied LSN ${state.last_lsn} < minLsn ${minLsn}`, {
+            appliedLsn: Number(state.last_lsn),
+            minLsn,
+            leaderLastLsn: Number(state.last_lsn)
+          });
+        }
+        await new Promise(r => setTimeout(r, 50));
+        state = await getNodeState();
+      }
+    }
+
+    const consistency = params && params.consistency;
+
+    // 2. strong consistency: primary only
+    if (consistency === 'strong') {
+      if (state.role !== 'primary') {
+        throw new RpcError(ERROR_CODES.NOT_PRIMARY, `Strong consistency read requires primary node`, {
+          leaderHint: state.leader_id || 'a',
+          epoch: state.epoch
+        });
+      }
+    }
+
+    // Determine leaderLastLsn
+    let leaderLastLsn = Number(state.last_lsn);
+    if (state.role !== 'primary') {
+      const leaderRow = await query('SELECT last_lsn FROM cluster_nodes WHERE node_id = $1', [state.leader_id || 'a']);
+      if (leaderRow.rows.length > 0 && leaderRow.rows[0].last_lsn) {
+        leaderLastLsn = Math.max(leaderLastLsn, Number(leaderRow.rows[0].last_lsn));
+      }
+    }
+
+    const appliedLsn = Number(state.last_lsn);
+    const staleBy = Math.max(0, leaderLastLsn - appliedLsn);
+
+    // 3. bounded consistency: maxLagLsn check
+    if (consistency === 'bounded') {
+      const maxLagLsn = params.maxLagLsn !== undefined ? Number(params.maxLagLsn) : 5;
+      if (staleBy > maxLagLsn) {
+        throw new RpcError(ERROR_CODES.READ_TOO_STALE, `Node lag ${staleBy} exceeds maxLagLsn ${maxLagLsn}`, {
+          appliedLsn,
+          leaderLastLsn,
+          staleBy,
+          maxLagLsn
+        });
+      }
+    }
+
+    return {
+      state,
+      appliedLsn,
+      leaderLastLsn,
+      staleBy,
+      servedBy: config.nodeId
+    };
+  }
+
   // Read Operations (Can run on any eligible node)
   rpcServer.register('bank.getBalance', async (params) => {
+    const metaInfo = await checkReadConsistency(params);
     const accountId = validateAccountId(params.accountId);
     const accRes = await query(`
       SELECT account_id, holder_name, status, balance, currency, version, updated_lsn
@@ -54,7 +125,6 @@ function registerBankMethods(rpcServer, config) {
     }
 
     const acc = accRes.rows[0];
-    const state = await getNodeState();
 
     return {
       accountId: acc.account_id,
@@ -63,14 +133,15 @@ function registerBankMethods(rpcServer, config) {
       currency: acc.currency,
       status: acc.status,
       version: Number(acc.version),
-      appliedLsn: Number(acc.updated_lsn),
-      leaderLastLsn: Number(state.last_lsn),
-      staleBy: Math.max(0, Number(state.last_lsn) - Number(acc.updated_lsn)),
-      servedBy: config.nodeId
+      appliedLsn: metaInfo.appliedLsn,
+      leaderLastLsn: metaInfo.leaderLastLsn,
+      staleBy: metaInfo.staleBy,
+      servedBy: metaInfo.servedBy
     };
   });
 
   rpcServer.register('bank.getAccount', async (params) => {
+    const metaInfo = await checkReadConsistency(params);
     const accountId = validateAccountId(params.accountId);
     const accRes = await query(`
       SELECT account_id, holder_name, status, balance, currency, version,
@@ -84,7 +155,6 @@ function registerBankMethods(rpcServer, config) {
     }
 
     const acc = accRes.rows[0];
-    const state = await getNodeState();
 
     return {
       accountId: acc.account_id,
@@ -97,19 +167,21 @@ function registerBankMethods(rpcServer, config) {
       updatedAt: acc.updated_at,
       createdLsn: Number(acc.created_lsn),
       updatedLsn: Number(acc.updated_lsn),
-      servedBy: config.nodeId,
-      appliedLsn: Number(state.last_lsn)
+      servedBy: metaInfo.servedBy,
+      appliedLsn: metaInfo.appliedLsn,
+      leaderLastLsn: metaInfo.leaderLastLsn,
+      staleBy: metaInfo.staleBy
     };
   });
 
-  rpcServer.register('bank.listAccounts', async () => {
+  rpcServer.register('bank.listAccounts', async (params) => {
+    const metaInfo = await checkReadConsistency(params);
     const res = await query(`
       SELECT account_id, holder_name, status, balance, currency, version
       FROM accounts
       ORDER BY account_id ASC;
     `);
 
-    const state = await getNodeState();
     return {
       accounts: res.rows.map(r => ({
         accountId: r.account_id,
@@ -120,19 +192,23 @@ function registerBankMethods(rpcServer, config) {
         version: Number(r.version)
       })),
       totalAccounts: res.rows.length,
-      servedBy: config.nodeId,
-      appliedLsn: Number(state.last_lsn)
+      servedBy: metaInfo.servedBy,
+      appliedLsn: metaInfo.appliedLsn,
+      leaderLastLsn: metaInfo.leaderLastLsn,
+      staleBy: metaInfo.staleBy
     };
   });
 
   rpcServer.register('bank.getHistory', async (params) => {
+    const metaInfo = await checkReadConsistency(params);
     const transactions = await getTransactionHistory(null, params);
-    const state = await getNodeState();
     return {
       transactions,
       count: transactions.length,
-      servedBy: config.nodeId,
-      appliedLsn: Number(state.last_lsn)
+      servedBy: metaInfo.servedBy,
+      appliedLsn: metaInfo.appliedLsn,
+      leaderLastLsn: metaInfo.leaderLastLsn,
+      staleBy: metaInfo.staleBy
     };
   });
 }

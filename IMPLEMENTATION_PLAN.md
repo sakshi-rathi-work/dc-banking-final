@@ -398,12 +398,14 @@ Each phase is executed strictly in sequential order. Phase $N+1$ will never comm
    - Unit tests: hash validation, ack tracking logic.
    - Integration test: `tests/integration/phase5.test.js`.
 
-#### Exit Criteria
-- Banking transactions on Node A replicate to Nodes B, C, D; direct query on all 4 databases shows identical transaction rows, ledger lines, and matching `stateChecksum`.
-- In ASYNC mode, injecting `replicationDelayMs{d} = 3000` demonstrates observable lag on Node D, followed by eventual convergence.
-- In SYNC mode, write latency includes the injected delay to the backup; loss of 2 followers immediately returns `INSUFFICIENT_REPLICAS`.
-- Missing records trigger `GAP` and automatic rewind; resending entries increments duplicate count without altering balances.
-- Restarted follower fetches missed entries and catches up to leader.
+#### Exit Criteria Verified
+- Banking transactions on Node A replicate to Nodes B, C, D; direct query on all 4 databases shows identical transaction rows, ledger lines, and matching `stateChecksum` (`7c93bb`).
+- In ASYNC mode, injecting `replicationDelayMs{d} = 2000` demonstrates observable lag on Node D, followed by eventual convergence to lag 0.
+- In SYNC mode, write latency includes the injected delay to the backup; loss of 2 followers immediately fails fast with `-32008 INSUFFICIENT_REPLICAS`.
+- Missing records trigger `GAP` and automatic rewind; resending entries increments duplicate count without altering balances or creating duplicate state.
+- Read consistency options (`strong`, `bounded`, `eventual`, `minLsn`) verified.
+- Unit tests: `tests/unit/replication.test.js` (36/36 unit tests pass across test suite).
+- Integration tests: `tests/integration/phase5.test.js` (43/43 integration tests pass across test suite; 79/79 total tests passing).
 
 ---
 

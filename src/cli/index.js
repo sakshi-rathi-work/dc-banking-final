@@ -8,7 +8,8 @@ const {
   renderRpcResult,
   renderClocksTable,
   renderBerkeleySync,
-  renderEventOrdering
+  renderEventOrdering,
+  renderReplicationStatus
 } = require('./render');
 const { compareEventOrdering } = require('../clocks/ordering');
 
@@ -232,6 +233,124 @@ async function handleRpcCommand(args, config) {
   }
 }
 
+async function handleReplicationCommand(args, config) {
+  const sub = args[0] || 'status';
+
+  if (sub === 'status') {
+    const accountId = args[1] || 'ACC-0001';
+    const nodeIds = ['a', 'b', 'c', 'd'];
+    const statusList = [];
+
+    // First fetch leader status to get peer lastAckMs
+    let peerAcks = {};
+    for (const nid of nodeIds) {
+      const url = resolveNodeUrl(nid, config);
+      try {
+        const ls = await callRpc(url, 'replication.leaderStatus', {}, { timeoutMs: 1500 });
+        if (ls && ls.peers) {
+          peerAcks = ls.peers;
+          break;
+        }
+      } catch (_) {}
+    }
+
+    for (const nid of nodeIds) {
+      const url = resolveNodeUrl(nid, config);
+      try {
+        const st = await callRpc(url, 'replication.status', {}, { timeoutMs: 1500 });
+        let balance = '-';
+        try {
+          const balRes = await callRpc(url, 'bank.getBalance', { accountId, consistency: 'eventual' }, { timeoutMs: 1500 });
+          balance = balRes.balance;
+        } catch (_) {}
+
+        statusList.push({
+          nodeId: nid,
+          role: st.role,
+          appliedLsn: st.appliedLsn,
+          stateChecksum: st.stateChecksum,
+          balance,
+          lastAckMs: peerAcks[nid]?.lastAckMs
+        });
+      } catch (err) {
+        statusList.push({
+          nodeId: nid,
+          role: 'down',
+          appliedLsn: 0,
+          stateChecksum: null,
+          balance: '-',
+          lastAckMs: null
+        });
+      }
+    }
+
+    console.log('REPLICATION > Replication Status');
+    console.log(renderReplicationStatus(statusList, accountId));
+  } else if (sub === 'mode') {
+    const mode = (args[1] || 'ASYNC').toUpperCase();
+    const syncAcks = args[2] ? Number(args[2]) : 2;
+    const leaderUrl = resolveNodeUrl('a', config);
+
+    try {
+      const res = await callRpc(leaderUrl, 'replication.setMode', { mode, syncAcks }, { timeoutMs: 5000 });
+      console.log(`REPLICATION > Set Mode: ${mode}${syncAcks ? `   syncAcks=${syncAcks}` : ''}`);
+      console.log(`Committed mode change at LSN ${res.lsn}`);
+    } catch (err) {
+      console.error('Failed to set replication mode:', err.message);
+      process.exit(1);
+    }
+  } else if (sub === 'wait-convergence') {
+    const timeoutSec = args[1] ? Number(args[1]) : 10;
+    const tStart = Date.now();
+    const nodeIds = ['a', 'b', 'c', 'd'];
+
+    while (Date.now() - tStart < timeoutSec * 1000) {
+      const statuses = [];
+      for (const nid of nodeIds) {
+        const url = resolveNodeUrl(nid, config);
+        try {
+          const s = await callRpc(url, 'replication.status', {}, { timeoutMs: 1000 });
+          statuses.push(s);
+        } catch (_) {}
+      }
+
+      if (statuses.length === 4) {
+        const firstLsn = statuses[0].appliedLsn;
+        const firstChecksum = statuses[0].stateChecksum;
+        const allEqualLsn = statuses.every(s => s.appliedLsn === firstLsn);
+        const allEqualChecksum = statuses.every(s => s.stateChecksum === firstChecksum);
+
+        if (allEqualLsn && allEqualChecksum) {
+          const elapsedSec = ((Date.now() - tStart) / 1000).toFixed(2);
+          console.log(`REPLICATION > Wait for Convergence`);
+          console.log(`t+${elapsedSec} s   converged   lsn ${firstLsn} on a,b,c,d   checksum ${firstChecksum.slice(0, 6)} equal   PASS`);
+          return;
+        }
+      }
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    console.error(`REPLICATION > Wait for Convergence   FAILED (timed out after ${timeoutSec}s)`);
+    process.exit(1);
+  } else if (sub === 'resend') {
+    const toPeer = args[1];
+    const fromLsn = Number(args[2]);
+    const toLsn = Number(args[3]);
+    const leaderUrl = resolveNodeUrl('a', config);
+
+    try {
+      const res = await callRpc(leaderUrl, 'replication.resend', { toPeer, fromLsn, toLsn }, { timeoutMs: 5000 });
+      console.log(`REPLICATION > Resend to ${toPeer} lsn ${fromLsn}..${toLsn}: sent ${res.sentCount} entries`);
+    } catch (err) {
+      console.error('Resend failed:', err.message);
+      process.exit(1);
+    }
+  } else {
+    console.error(`Unknown repl subcommand: ${sub}`);
+    process.exit(1);
+  }
+}
+
 async function main() {
   const config = loadConfig();
   const args = process.argv.slice(2);
@@ -243,6 +362,11 @@ async function main() {
 
   if (args[0] === 'clocks') {
     await handleClocksCommand(args.slice(1), config);
+    return;
+  }
+
+  if (args[0] === 'repl' || args[0] === 'replication') {
+    await handleReplicationCommand(args.slice(1), config);
     return;
   }
 
@@ -270,4 +394,5 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, handleRpcCommand, handleClocksCommand };
+module.exports = { main, handleRpcCommand, handleClocksCommand, handleReplicationCommand };
+

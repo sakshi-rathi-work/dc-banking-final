@@ -122,10 +122,46 @@ function renderEventOrdering(orderingReport, title = '') {
   return lines.join('\n');
 }
 
+function renderReplicationStatus(statusList = [], accountId = 'ACC-0001') {
+  const lines = [
+    `node  role     applied  lag  pending  lastAck   ${accountId.padEnd(11)} checksum`
+  ];
+
+  let leaderLastLsn = 0;
+  for (const s of statusList) {
+    if (s.role === 'primary') {
+      leaderLastLsn = s.appliedLsn || 0;
+    }
+  }
+
+  const acksList = [];
+  for (const s of statusList) {
+    const node = String(s.nodeId || '').padEnd(5);
+    const role = String(s.role || '').padEnd(8);
+    const applied = String(s.appliedLsn ?? '-').padEnd(8);
+    const lagVal = s.role === 'primary' ? 0 : Math.max(0, leaderLastLsn - (s.appliedLsn || 0));
+    const lag = String(lagVal).padEnd(4);
+    const pending = String(lagVal).padEnd(8);
+    const lastAck = s.role === 'primary' ? '-        ' : (s.lastAckMs !== undefined && s.lastAckMs !== null ? `${s.lastAckMs} ms`.padEnd(9) : '-        ');
+    const bal = String(s.balance ?? '-').padEnd(11);
+    const chk = s.stateChecksum ? String(s.stateChecksum).slice(0, 6) : `(lsn ${s.appliedLsn})`;
+
+    lines.push(`${node} ${role} ${applied} ${lag} ${pending} ${lastAck} ${bal} ${chk}`);
+    if (s.role !== 'primary') {
+      acksList.push(`${s.nodeId}=${s.appliedLsn}`);
+    }
+  }
+
+  lines.push(`errors none   acks ${acksList.join(' ')}`);
+  return lines.join('\n');
+}
+
 module.exports = {
   renderTrace,
   renderRpcResult,
   renderClocksTable,
   renderBerkeleySync,
-  renderEventOrdering
+  renderEventOrdering,
+  renderReplicationStatus
 };
+
