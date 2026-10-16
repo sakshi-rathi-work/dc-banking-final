@@ -33,6 +33,10 @@ async function query(text, params) {
   return p.query(text, params);
 }
 
+async function getClient() {
+  return getPool().connect();
+}
+
 async function closePool() {
   if (pool) {
     await pool.end();
@@ -42,6 +46,7 @@ async function closePool() {
 
 module.exports = {
   getPool,
+  getClient,
   query,
   closePool
 };

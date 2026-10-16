@@ -105,6 +105,13 @@ class FailureDetector {
           mem.lastLsn = res.lastLsn || mem.lastLsn;
         }
 
+        // Record peer ack for leader lease
+        const { getFencingManager } = require('../faulttolerance/fencing');
+        const fencing = getFencingManager();
+        if (fencing) {
+          fencing.recordPeerAck(peerId);
+        }
+
         await query(`
           UPDATE cluster_nodes SET
             last_seen_at = now(),
@@ -133,6 +140,15 @@ class FailureDetector {
                 suspected = true
               WHERE node_id = $1
             `, [peerId]);
+
+            // Notify Failover Controller
+            const { getFailoverController } = require('../faulttolerance/failoverController');
+            const failover = getFailoverController();
+            if (failover) {
+              failover.onPeerSuspected(peerId).catch(err => {
+                logger.error({ event: 'failover.on_suspected_error', peerId, error: err.message });
+              });
+            }
           }
         }
       }
@@ -155,6 +171,13 @@ class FailureDetector {
     mem.lastEpoch = params.epoch || mem.lastEpoch;
     mem.lastLsn = params.lastLsn || mem.lastLsn;
     this.peerMemoryState.set(peerId, mem);
+
+    // Record peer ack for leader lease
+    const { getFencingManager } = require('../faulttolerance/fencing');
+    const fencing = getFencingManager();
+    if (fencing) {
+      fencing.recordPeerAck(peerId);
+    }
 
     // Fire-and-forget update to database
     query(`
@@ -228,6 +251,16 @@ class FailureDetector {
       if (suspected) mem.lastSeenAt = 0;
     }
     await query('UPDATE cluster_nodes SET suspected = $1 WHERE node_id = $2', [suspected, peerId]);
+
+    if (suspected) {
+      const { getFailoverController } = require('../faulttolerance/failoverController');
+      const failover = getFailoverController();
+      if (failover) {
+        failover.onPeerSuspected(peerId).catch(err => {
+          logger.error({ event: 'failover.on_suspected_error', peerId, error: err.message });
+        });
+      }
+    }
   }
 }
 

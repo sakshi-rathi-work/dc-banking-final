@@ -353,7 +353,9 @@ async function handleReplicationCommand(args, config) {
 
 async function main() {
   const config = loadConfig();
-  const args = process.argv.slice(2);
+  const rawArgs = process.argv.slice(2);
+  const raw = rawArgs.includes('--raw');
+  const args = rawArgs.filter(a => a !== '--raw');
 
   if (args[0] === 'rpc') {
     await handleRpcCommand(args.slice(1), config);
@@ -370,21 +372,28 @@ async function main() {
     return;
   }
 
-  // Default status dump
-  console.log('=========================================');
-  console.log('       DISTRIBUTED BANKING SYSTEM        ');
-  console.log('=========================================');
-
-  try {
-    const status = await callRpc(config.coordinatorUrl, 'gateway.clusterStatus', {});
-    console.log('Coordinator status:', status.coordinator.status);
-    console.log('Nodes detected:');
-    for (const [nodeId, info] of Object.entries(status.nodes)) {
-      console.log(`  Node ${nodeId.toUpperCase()}: ${info.online ? `ONLINE (role=${info.role}, epoch=${info.epoch})` : `OFFLINE (${info.error})`}`);
-    }
-  } catch (err) {
-    console.log(`Unable to reach coordinator at ${config.coordinatorUrl}: ${err.message}`);
+  if (args[0] === 'history') {
+    const { handleViewHistory } = require('./experiments/cluster');
+    const dummyPrompt = async () => '';
+    await handleViewHistory(dummyPrompt, config);
+    return;
   }
+
+  if (args[0] === 'invariants') {
+    const { handleVerifyInvariants } = require('./experiments/cluster');
+    await handleVerifyInvariants();
+    return;
+  }
+
+  if (args[0] === 'status') {
+    const { handleViewClusterStatus } = require('./experiments/cluster');
+    await handleViewClusterStatus(config);
+    return;
+  }
+
+  // If no subcommand is specified, start the interactive terminal menu (Section 23.2)
+  const { runInteractiveMenu } = require('./menu');
+  await runInteractiveMenu(config, raw);
 }
 
 if (require.main === module) {

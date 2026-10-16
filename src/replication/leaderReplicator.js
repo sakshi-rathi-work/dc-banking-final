@@ -190,6 +190,13 @@ class LeaderReplicator {
       return; // Waiting for follower-initiated resync
     }
 
+    if (peerState.state === 'BACKOFF') {
+      const lastAckAt = peerState.last_ack_at ? new Date(peerState.last_ack_at).getTime() : 0;
+      if (Date.now() - lastAckAt < 2000) {
+        return; // In backoff window, do not spam peer
+      }
+    }
+
     const nextLsn = Number(peerState.next_lsn || 1);
 
     if (nextLsn > leaderLastLsn) {
@@ -314,12 +321,20 @@ class LeaderReplicator {
         }
       }
     } catch (err) {
+      if (err.code === ERROR_CODES.STALE_LEADER || err.message?.includes('lower than promised epoch')) {
+        logger.warn({ event: 'replication.leader_stale', peerId, error: err.message });
+        await query(`UPDATE node_state SET role = 'replica', updated_at = now() WHERE id = 1;`).catch(() => {});
+        this.stop();
+        return;
+      }
+
       const isTimeout = err.name === 'RpcTimeoutError' || err.code === 'ETIMEDOUT';
       const isConnRefused = err.name === 'RpcNetworkError' || err.code === 'ECONNREFUSED';
 
       await query(`
         UPDATE replication_peer_state SET
           state = 'BACKOFF',
+          last_ack_at = now(),
           last_error = $1
         WHERE peer_id = $2;
       `, [err.message, peerId]).catch(() => {});

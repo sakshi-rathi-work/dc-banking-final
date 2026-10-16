@@ -14,10 +14,15 @@ const MUTATING_METHODS = new Set([
 ]);
 
 class Gateway {
-  constructor(leaderTracker, config) {
+  constructor(leaderTracker, config, loadBalancer = null) {
     this.leaderTracker = leaderTracker;
     this.config = config;
+    this.loadBalancer = loadBalancer;
     this.maxWriteRetries = 3;
+  }
+
+  setLoadBalancer(lb) {
+    this.loadBalancer = lb;
   }
 
   async handleCall(method, params = {}, incomingMeta = null) {
@@ -120,6 +125,10 @@ class Gateway {
   }
 
   async routeRead(method, params, meta, startTime) {
+    if (this.loadBalancer) {
+      return this.loadBalancer.executeRead(method, params, meta, startTime);
+    }
+
     let targetNode;
     try {
       targetNode = await this.leaderTracker.getLeader(2000);

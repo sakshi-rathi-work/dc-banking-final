@@ -156,12 +156,169 @@ function renderReplicationStatus(statusList = [], accountId = 'ACC-0001') {
   return lines.join('\n');
 }
 
+function renderBanner(info = {}) {
+  const leader = info.leaderId ? `node-${info.leaderId}` : 'none';
+  const epoch = info.epoch !== undefined ? info.epoch : '-';
+  const mode = info.replicationMode || 'ASYNC';
+  const nodesUp = info.nodesUp || '4/4';
+
+  const lines = [
+    '=========================================',
+    '       DISTRIBUTED BANKING SYSTEM        ',
+    `  leader: ${leader.padEnd(8)} epoch: ${String(epoch).padEnd(3)} mode: ${mode.padEnd(7)} nodes up: ${nodesUp}`,
+    '========================================='
+  ];
+  return lines.join('\n');
+}
+
+function renderClusterTable(nodesList = []) {
+  const lines = [
+    'node  role     epoch  leader  backup  lastLsn  durableLsn  mode   health   lease'
+  ];
+
+  for (const n of nodesList) {
+    const node = String(n.nodeId || '').padEnd(5);
+    const role = String(n.role || 'down').padEnd(8);
+    const epoch = String(n.epoch ?? '-').padEnd(6);
+    const leader = String(n.leaderId || '-').padEnd(7);
+    const backup = String(n.backupId || '-').padEnd(7);
+    const lastLsn = String(n.lastLsn ?? '-').padEnd(8);
+    const durableLsn = String(n.durableLsn ?? '-').padEnd(11);
+    const mode = String(n.replicationMode || '-').padEnd(6);
+    const health = (n.dbHealthy ? 'healthy' : 'unhealthy').padEnd(8);
+    const lease = n.leaseValid ? 'valid' : 'expired';
+
+    lines.push(`${node} ${role} ${epoch} ${leader} ${backup} ${lastLsn} ${durableLsn} ${mode} ${health} ${lease}`);
+  }
+
+  return lines.join('\n');
+}
+
+function renderTransactionHistory(transactions = []) {
+  if (!Array.isArray(transactions) || transactions.length === 0) {
+    return 'No transactions found.';
+  }
+
+  const lines = [
+    'txnId     type        source    dest      amount       status     lsn  epoch  lamport  committed'
+  ];
+
+  for (const t of transactions) {
+    const txnId = String(t.txn_id || t.txnId || '').slice(0, 8).padEnd(9);
+    const type = String(t.type || '').padEnd(11);
+    const src = String(t.source_account_id || t.sourceAccountId || '-').padEnd(9);
+    const dst = String(t.destination_account_id || t.destinationAccountId || '-').padEnd(9);
+    const amt = String(t.amount || '').padStart(10).padEnd(12);
+    const status = String(t.status || '').padEnd(10);
+    const lsn = String(t.lsn ?? '-').padEnd(4);
+    const epoch = String(t.epoch ?? '-').padEnd(6);
+    const lamport = String(t.lamport_ts || t.lamport || '-').padEnd(8);
+    const committed = t.committed_at ? new Date(t.committed_at).toISOString().slice(11, 19) : '-';
+
+    lines.push(`${txnId} ${type} ${src} ${dst} ${amt} ${status} ${lsn} ${epoch} ${lamport} ${committed}`);
+  }
+
+  return lines.join('\n');
+}
+
+function renderInvariantsReport(reports = []) {
+  const lines = [
+    'node  I1  I2  I3  I4  I5  I6  I7  I8  I9  I10 I11 I12  checksum  verdict'
+  ];
+
+  for (const r of reports) {
+    const node = String(r.nodeId || '').padEnd(5);
+    const inv = r.invariants || {};
+    const flags = [];
+    for (let i = 1; i <= 12; i++) {
+      const code = `I${i}`;
+      flags.push(inv[code] ? 'OK' : 'FL');
+    }
+    const invStr = flags.join('  ');
+    const chk = r.checksum ? String(r.checksum).slice(0, 6).padEnd(9) : '-        ';
+    const verdict = r.passed ? 'PASS' : 'FAIL';
+
+    lines.push(`${node} ${invStr}   ${chk} ${verdict}`);
+  }
+
+  return lines.join('\n');
+}
+
+function renderFaultsTable(faultsList = []) {
+  const lines = [
+    'node  knob                  value'
+  ];
+
+  for (const f of faultsList) {
+    const node = String(f.nodeId).padEnd(5);
+    const knob = String(f.knob).padEnd(21);
+    const val = typeof f.value === 'object' ? JSON.stringify(f.value) : String(f.value);
+    lines.push(`${node} ${knob} ${val}`);
+  }
+
+  if (faultsList.length === 0) {
+    lines.push('none  (all fault knobs inactive)');
+  }
+
+  return lines.join('\n');
+}
+
+function renderWorkerReport(report = {}) {
+  const lines = [
+    `batchId: ${report.batchId || ''}   duration: ${report.durationMs || 0} ms`,
+    `totalTasks: ${report.totalTasks || 0}   committed: ${report.committed || 0}   rejected: ${report.rejected || 0}`,
+    '',
+    'threadId  pgBackendPid  tasksExecuted  committed  rejected'
+  ];
+
+  for (const w of report.workerStats || []) {
+    const tid = String(w.threadId || '').padEnd(9);
+    const pid = String(w.pgBackendPid || '').padEnd(13);
+    const executed = String(w.tasksExecuted || 0).padEnd(14);
+    const comm = String(w.committed || 0).padEnd(10);
+    const rej = String(w.rejected || 0);
+
+    lines.push(`${tid} ${pid} ${executed} ${comm} ${rej}`);
+  }
+
+  return lines.join('\n');
+}
+
+function renderLoadBalancerStats(stats = {}) {
+  const lines = [
+    `algorithm: ${stats.algorithm || ''}   totalRequests: ${stats.totalRequests || 0}`,
+    '',
+    'node  requests  share  peakActive  p50(ms)  p95(ms)'
+  ];
+
+  const nodes = stats.nodes || {};
+  for (const [nid, s] of Object.entries(nodes)) {
+    const node = nid.padEnd(5);
+    const reqs = String(s.requests || 0).padEnd(9);
+    const share = String(s.share || '0%').padEnd(6);
+    const peak = String(s.peakActive || 0).padEnd(11);
+    const p50 = String(s.p50Ms || 0).padEnd(8);
+    const p95 = String(s.p95Ms || 0);
+
+    lines.push(`${node} ${reqs} ${share} ${peak} ${p50} ${p95}`);
+  }
+
+  return lines.join('\n');
+}
+
 module.exports = {
   renderTrace,
   renderRpcResult,
   renderClocksTable,
   renderBerkeleySync,
   renderEventOrdering,
-  renderReplicationStatus
+  renderReplicationStatus,
+  renderBanner,
+  renderClusterTable,
+  renderTransactionHistory,
+  renderInvariantsReport,
+  renderFaultsTable,
+  renderWorkerReport,
+  renderLoadBalancerStats
 };
 

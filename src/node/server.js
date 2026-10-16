@@ -15,6 +15,7 @@ const { registerAdminMethods } = require('./methods/admin');
 const { registerWorkerMethods } = require('./methods/worker');
 const { registerClockMethods } = require('./methods/clock');
 const { registerReplicationMethods } = require('./methods/replication');
+const { registerElectionMethods } = require('./methods/election');
 
 async function main() {
   const config = loadConfig();
@@ -52,9 +53,17 @@ async function main() {
   // 3. Initialize Failure Detector
   const failureDetector = new FailureDetector(config);
   setFailureDetector(failureDetector);
+
+  // 3b. Initialize Fencing Manager & Failover Controller (PROJECT.md Section 21)
+  const { initFencingManager } = require('../faulttolerance/fencing');
+  const { initFailoverController } = require('../faulttolerance/failoverController');
+  const fencingManager = initFencingManager(config);
+  const failoverController = initFailoverController(config, failureDetector);
+
   try {
     await failureDetector.init();
     failureDetector.start();
+    fencingManager.start();
     logger.info({ event: 'failure_detector.started' });
   } catch (err) {
     logger.error({ event: 'failure_detector.init_error', error: err.message });
@@ -83,6 +92,7 @@ async function main() {
   registerWorkerMethods(rpcServer, config);
   registerClockMethods(rpcServer, config);
   registerReplicationMethods(rpcServer, config);
+  registerElectionMethods(rpcServer, config);
 
   // Mount JSON-RPC handler at POST /rpc
   app.use(rpcServer.createMiddleware());
@@ -128,6 +138,7 @@ async function main() {
 
   const shutdown = async (signal) => {
     logger.info({ event: 'node.shutting_down', signal });
+    fencingManager.stop();
     failureDetector.stop();
     server.close();
     await closePool();

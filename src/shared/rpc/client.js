@@ -9,9 +9,12 @@ async function callRpc(url, method, params = {}, options = {}) {
   const timeoutMs = options.timeoutMs || parseInt(process.env.RPC_TIMEOUT_MS || '2000', 10);
   const reqId = options.id || `req-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 
+  const isLivenessCheck = method === 'cluster.heartbeat' || method === 'cluster.ping' || method === 'cluster.getState' || Boolean(options.skipLamportTick);
   // Stamp request with outgoing Lamport clock and Physical clock
-  // Send rule: L = L + 1
-  lamportClock.tick();
+  // Send rule: L = L + 1 (for domain events)
+  if (!isLivenessCheck) {
+    lamportClock.tick();
+  }
   const currentLamport = lamportClock.get();
   const currentPhysicalTs = physicalClock.now();
 
@@ -36,6 +39,16 @@ async function callRpc(url, method, params = {}, options = {}) {
   let targetUrl = url;
   if (!targetUrl.endsWith('/rpc')) {
     targetUrl = targetUrl.replace(/\/+$/, '') + '/rpc';
+  }
+
+  // Check partition/isolate faults (PROJECT.md Section 22.2)
+  const { faults } = require('../faults');
+  if (faults && faults.isEnabled()) {
+    const isIsolated = Boolean(faults.getFault('isolate'));
+    const isTargetCoordinator = targetUrl.includes('8080') || targetUrl.includes('coordinator');
+    if (isIsolated && !isTargetCoordinator && method !== 'cluster.clearFaults') {
+      throw new RpcTimeoutError(`RPC request to ${targetUrl} (${method}) dropped due to isolate fault`);
+    }
   }
 
   const signal = AbortSignal.timeout(timeoutMs);
@@ -70,11 +83,13 @@ async function callRpc(url, method, params = {}, options = {}) {
   }
 
   // Update client's Lamport clock upon receiving response
-  // Receive rule: L = max(L, msg.lamport) + 1
-  if (body.result && body.result._meta && body.result._meta.lamport !== undefined) {
-    lamportClock.update(body.result._meta.lamport);
-  } else if (body.error && body.error.data && body.error.data._meta && body.error.data._meta.lamport !== undefined) {
-    lamportClock.update(body.error.data._meta.lamport);
+  // Receive rule: L = max(L, msg.lamport) + 1 (for non-liveness events)
+  if (!isLivenessCheck) {
+    if (body.result && body.result._meta && body.result._meta.lamport !== undefined) {
+      lamportClock.update(body.result._meta.lamport);
+    } else if (body.error && body.error.data && body.error.data._meta && body.error.data._meta.lamport !== undefined) {
+      lamportClock.update(body.error.data._meta.lamport);
+    }
   }
 
   if (body.error) {

@@ -22,9 +22,19 @@ const METHOD_NAMES = {
   CLUSTER_PING: 'cluster.ping',
   CLUSTER_GET_STATE: 'cluster.getState',
   CLUSTER_HEARTBEAT: 'cluster.heartbeat',
+  CLUSTER_REQUEST_EPOCH: 'cluster.requestEpoch',
+  CLUSTER_ANNOUNCE_LEADER: 'cluster.announceLeader',
   CLUSTER_SET_FAULT: 'cluster.setFault',
   CLUSTER_GET_FAULTS: 'cluster.getFaults',
   CLUSTER_CLEAR_FAULTS: 'cluster.clearFaults',
+
+  // Election (Experiment 4)
+  ELECTION_START: 'election.start',
+  ELECTION_BULLY: 'election.bully',
+  ELECTION_BULLY_COORDINATOR: 'election.bullyCoordinator',
+  ELECTION_RING_TOKEN: 'election.ringToken',
+  ELECTION_RING_COORDINATOR: 'election.ringCoordinator',
+  ELECTION_GET_LOG: 'election.getLog',
 
   // Admin
   ADMIN_VERIFY_INVARIANTS: 'admin.verifyInvariants',
@@ -52,7 +62,12 @@ const METHOD_NAMES = {
 
   // Gateway
   GATEWAY_CALL: 'gateway.call',
-  GATEWAY_CLUSTER_STATUS: 'gateway.clusterStatus'
+  GATEWAY_CLUSTER_STATUS: 'gateway.clusterStatus',
+
+  // Load Balancer (Experiment 6)
+  LB_SET_ALGORITHM: 'lb.setAlgorithm',
+  LB_RUN: 'lb.run',
+  LB_STATS: 'lb.stats'
 };
 
 function validateMethodParams(method, params = {}) {
@@ -169,6 +184,93 @@ function validateMethodParams(method, params = {}) {
       }
       if (typeof params.fromLsn !== 'number' || typeof params.toLsn !== 'number' || params.fromLsn > params.toLsn) {
         throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'Invalid fromLsn/toLsn range for resend');
+      }
+      break;
+
+    case METHOD_NAMES.CLUSTER_REQUEST_EPOCH:
+      if (params.epoch === undefined || typeof params.epoch !== 'number' || params.epoch < 1) {
+        throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'cluster.requestEpoch requires positive numeric "epoch"');
+      }
+      if (!params.candidateId || typeof params.candidateId !== 'string') {
+        throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'cluster.requestEpoch requires string "candidateId"');
+      }
+      break;
+
+    case METHOD_NAMES.CLUSTER_ANNOUNCE_LEADER:
+      if (params.epoch === undefined || typeof params.epoch !== 'number' || params.epoch < 1) {
+        throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'cluster.announceLeader requires positive numeric "epoch"');
+      }
+      if (!params.leaderId || typeof params.leaderId !== 'string') {
+        throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'cluster.announceLeader requires string "leaderId"');
+      }
+      break;
+
+    case METHOD_NAMES.ELECTION_START:
+      if (params.algorithm && !['bully', 'ring'].includes(params.algorithm)) {
+        throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'election.start "algorithm" must be "bully" or "ring"');
+      }
+      if (params.excluded && !Array.isArray(params.excluded)) {
+        throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'election.start "excluded" must be an array of node IDs');
+      }
+      break;
+
+    case METHOD_NAMES.ELECTION_BULLY:
+      if (!params.electionId || typeof params.electionId !== 'string') {
+        throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'election.bully requires string "electionId"');
+      }
+      if (!params.fromId || typeof params.fromId !== 'string') {
+        throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'election.bully requires string "fromId"');
+      }
+      break;
+
+    case METHOD_NAMES.ELECTION_BULLY_COORDINATOR:
+      if (!params.electionId || typeof params.electionId !== 'string') {
+        throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'election.bullyCoordinator requires string "electionId"');
+      }
+      if (!params.winnerId || typeof params.winnerId !== 'string') {
+        throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'election.bullyCoordinator requires string "winnerId"');
+      }
+      break;
+
+    case METHOD_NAMES.ELECTION_RING_TOKEN:
+      if (!params.electionId || typeof params.electionId !== 'string') {
+        throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'election.ringToken requires string "electionId"');
+      }
+      if (!params.initiatorId || typeof params.initiatorId !== 'string') {
+        throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'election.ringToken requires string "initiatorId"');
+      }
+      if (!Array.isArray(params.candidates)) {
+        throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'election.ringToken requires "candidates" array');
+      }
+      break;
+
+    case METHOD_NAMES.ELECTION_RING_COORDINATOR:
+      if (!params.electionId || typeof params.electionId !== 'string') {
+        throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'election.ringCoordinator requires string "electionId"');
+      }
+      if (!params.winnerId || typeof params.winnerId !== 'string') {
+        throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'election.ringCoordinator requires string "winnerId"');
+      }
+      if (!Array.isArray(params.members)) {
+        throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'election.ringCoordinator requires "members" array');
+      }
+      break;
+
+    case METHOD_NAMES.LB_SET_ALGORITHM:
+      if (!params.algorithm || !['round-robin', 'least-connections'].includes(params.algorithm.toLowerCase())) {
+        throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'lb.setAlgorithm requires "algorithm" to be "round-robin" or "least-connections"');
+      }
+      break;
+
+    case METHOD_NAMES.LB_RUN:
+      if (params.algorithm && !['round-robin', 'least-connections'].includes(params.algorithm.toLowerCase())) {
+        throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'lb.run "algorithm" must be "round-robin" or "least-connections"');
+      }
+      if (params.requests !== undefined && (typeof params.requests !== 'number' || params.requests < 1)) {
+        throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'lb.run "requests" must be an integer >= 1');
+      }
+      if (params.concurrency !== undefined && (typeof params.concurrency !== 'number' || params.concurrency < 1)) {
+        throw new RpcError(ERROR_CODES.INVALID_PARAMS, 'lb.run "concurrency" must be an integer >= 1');
       }
       break;
 

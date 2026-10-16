@@ -9,6 +9,8 @@ const { callRpc } = require('../shared/rpc/client');
 const { LeaderTracker } = require('./leaderTracker');
 const { Gateway } = require('./gateway');
 const { TimeMaster } = require('./timeMaster');
+const { HealthRegistry } = require('./registry');
+const { LoadBalancer } = require('./loadBalancer');
 const { METHOD_NAMES } = require('../contracts/methods');
 const { physicalClock } = require('../clocks/physicalClock');
 const { lamportClock } = require('../clocks/lamportClock');
@@ -24,8 +26,12 @@ async function main() {
   });
 
   const leaderTracker = new LeaderTracker(config.peers);
-  const gateway = new Gateway(leaderTracker, config);
+  const registry = new HealthRegistry(config.peers, config);
+  const loadBalancer = new LoadBalancer(registry, config);
+  const gateway = new Gateway(leaderTracker, config, loadBalancer);
   const timeMaster = new TimeMaster(config.peers, config);
+
+  registry.start();
 
   const app = express();
   const rpcServer = new RpcServer();
@@ -114,6 +120,19 @@ async function main() {
     return gateway.handleCall(method, innerParams, meta);
   });
 
+  // Load Balancer (Experiment 6)
+  rpcServer.register('lb.setAlgorithm', async (params) => {
+    return loadBalancer.setAlgorithm(params.algorithm);
+  });
+
+  rpcServer.register('lb.run', async (params) => {
+    return loadBalancer.runLoadTest(params);
+  });
+
+  rpcServer.register('lb.stats', async () => {
+    return loadBalancer.getStats();
+  });
+
   // Direct banking, admin, and worker calls proxied through gateway
   for (const method of Object.values(METHOD_NAMES)) {
     if (method.startsWith('bank.') || method.startsWith('admin.') || method.startsWith('worker.')) {
@@ -140,6 +159,7 @@ async function main() {
 
   const shutdown = (signal) => {
     logger.info({ event: 'coordinator.shutting_down', signal });
+    registry.stop();
     server.close();
     process.exit(0);
   };

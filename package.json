@@ -5,8 +5,8 @@
   "main": "src/node/server.js",
   "scripts": {
     "test": "npm run test:unit && npm run test:integration",
-    "test:unit": "node --test tests/unit/**/*.test.js",
-    "test:integration": "node --test tests/integration/phase0.test.js && node --test tests/integration/phase1.test.js && node --test tests/integration/phase2.test.js && node --test tests/integration/phase3.test.js && node --test tests/integration/phase4.test.js && node --test tests/integration/phase5.test.js",
+    "test:unit": "node --test tests/unit/cli.test.js tests/unit/clocks.test.js tests/unit/config.test.js tests/unit/contracts.test.js tests/unit/election.test.js tests/unit/faultTolerance.test.js tests/unit/invariants.test.js tests/unit/loadBalancer.test.js tests/unit/money.test.js tests/unit/replication.test.js tests/unit/rpc.test.js",
+    "test:integration": "node --test tests/integration/phase0.test.js && node --test tests/integration/phase1.test.js && node --test tests/integration/phase2.test.js && node --test tests/integration/phase3.test.js && node --test tests/integration/phase4.test.js && node --test tests/integration/phase5.test.js && node --test tests/integration/phase6.test.js && node --test tests/integration/phase7.test.js && node --test tests/integration/phase8.test.js",
     "test:acceptance": "node --test tests/acceptance/**/*.test.js",
     "cli": "node src/cli/index.js",
     "demo:reset": "node scripts/demo-reset.js"

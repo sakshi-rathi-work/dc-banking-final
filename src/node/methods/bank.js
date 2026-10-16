@@ -16,6 +16,17 @@ function registerBankMethods(rpcServer, config) {
         epoch: state.epoch
       });
     }
+
+    const { getFencingManager } = require('../../faulttolerance/fencing');
+    const fencing = getFencingManager();
+    if (fencing && (!fencing.isLeaseValid() || !fencing.writeGateOpen)) {
+      fencing.closeWriteGate();
+      throw new RpcError(ERROR_CODES.NOT_PRIMARY, `Leader lease expired on Node ${config.nodeId}`, {
+        leaderHint: state.leader_id || 'a',
+        epoch: state.epoch
+      });
+    }
+
     return state;
   }
 

@@ -37,6 +37,29 @@ class RpcServer {
       }
 
       const { method, params = {}, id } = body;
+
+      // Check partition/isolate faults (PROJECT.md Section 22.2)
+      if (method !== 'cluster.setFault' && method !== 'cluster.getFaults' && method !== 'cluster.clearFaults') {
+        const isIsolated = Boolean(faults.getFault('isolate'));
+        const blockedPeers = faults.getFault('blockPeers') || [];
+        const blockCoordinator = Boolean(faults.getFault('blockCoordinator'));
+
+        const metaPeek = extractMeta(params);
+        const sender = (metaPeek && metaPeek.from) || (params && params.nodeId) || '';
+        const isFromCoordinator = sender === 'coordinator' || (!sender && method.startsWith('bank.'));
+
+        if (isIsolated) {
+          if (!isFromCoordinator || blockCoordinator) {
+            // Drop request without a response (delay so caller times out)
+            await new Promise(r => setTimeout(r, 6000));
+            return res.status(504).end();
+          }
+        } else if (Array.isArray(blockedPeers) && blockedPeers.includes(sender)) {
+          await new Promise(r => setTimeout(r, 6000));
+          return res.status(504).end();
+        }
+      }
+
       const handler = this.methods.get(method);
 
       if (!handler) {
@@ -46,13 +69,15 @@ class RpcServer {
         );
       }
 
+      const isLivenessCheck = method === 'cluster.heartbeat' || method === 'cluster.ping' || method === 'cluster.getState';
+
       const meta = extractMeta(params);
-      if (meta && meta.lamport !== undefined) {
-        // Receive rule: L = max(L, msg.lamport) + 1
+      if (meta && meta.lamport !== undefined && !isLivenessCheck) {
+        // Receive rule: L = max(L, msg.lamport) + 1 (for non-liveness events)
         lamportClock.update(meta.lamport);
       }
 
-      if (meta) {
+      if (meta && !isLivenessCheck) {
         const [s, ns] = process.hrtime(startTime);
         appendTrace(meta, 'rpc.received', s * 1000 + ns / 1e6);
         const correlationId = (meta && (meta.traceId || meta.requestId)) || reqId;
@@ -62,6 +87,9 @@ class RpcServer {
           peer: meta.from || 'client',
           detail: { method, reqId, traceId: meta.traceId }
         }).catch(() => {});
+      } else if (meta) {
+        const [s, ns] = process.hrtime(startTime);
+        appendTrace(meta, 'rpc.received', s * 1000 + ns / 1e6);
       }
 
       try {
@@ -76,8 +104,10 @@ class RpcServer {
         const [s, ns] = process.hrtime(startTime);
         const durationMs = s * 1000 + ns / 1e6;
 
-        // Send response: L = L + 1
-        lamportClock.tick();
+        // Send response: L = L + 1 (for domain events)
+        if (!isLivenessCheck) {
+          lamportClock.tick();
+        }
         const currentLamport = lamportClock.get();
         const currentPhysicalTs = physicalClock.now();
 
