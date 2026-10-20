@@ -36,7 +36,15 @@ function registerWorkerMethods(rpcServer, config) {
       return runScenario(scenario, pool, params);
     }
 
-    return pool.runBatch(params || {});
+    const batchParams = { ...(params || {}) };
+    if (!batchParams.operations && Array.isArray(batchParams.tasks)) {
+      batchParams.operations = batchParams.tasks;
+    }
+    if (!batchParams.workers && batchParams.concurrency) {
+      batchParams.workers = batchParams.concurrency;
+    }
+
+    return pool.runBatch(batchParams);
   });
 
   rpcServer.register('worker.getActivity', async () => {

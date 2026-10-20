@@ -37,7 +37,7 @@ class Gateway {
       appendTrace(meta, 'coordinator.received', 0);
     }
 
-    const isMutating = MUTATING_METHODS.has(method);
+    const isMutating = MUTATING_METHODS.has(method) || method === 'worker.getActivity';
 
     if (isMutating) {
       return this.routeWriteWithRetry(method, params, meta, startTime);
@@ -69,8 +69,12 @@ class Gateway {
       appendTrace(meta, `coordinator.forwarding -> node-${leader.nodeId}`, s1 * 1000 + ns1 / 1e6, 'coordinator');
 
       try {
+        const timeoutMs = method === 'worker.runBatch'
+          ? (this.config.batchTimeoutMs || 30000)
+          : (this.config.rpcTimeoutMs || 2000);
+
         const result = await callRpc(leader.url, method, targetParams, {
-          timeoutMs: this.config.rpcTimeoutMs || 2000
+          timeoutMs
         });
 
         const [s2, ns2] = process.hrtime(startTime);

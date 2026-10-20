@@ -115,14 +115,16 @@ function validateMethodParams(method, params = {}) {
       }
       break;
 
-    case METHOD_NAMES.WORKER_RUN_BATCH:
-      if (!params.scenario && (!Array.isArray(params.operations) || params.operations.length === 0)) {
+    case METHOD_NAMES.WORKER_RUN_BATCH: {
+      const ops = params.operations || params.tasks;
+      if (!params.scenario && (!Array.isArray(ops) || ops.length === 0)) {
         throw new RpcError(
           ERROR_CODES.INVALID_PARAMS,
           'worker.runBatch requires either a valid "scenario" string or a non-empty "operations" array'
         );
       }
       break;
+    }
 
     case METHOD_NAMES.CLOCK_SET_OFFSET:
       if (params.offsetMs === undefined || typeof params.offsetMs !== 'number' || isNaN(params.offsetMs)) {

@@ -264,18 +264,26 @@ function renderFaultsTable(faultsList = []) {
 }
 
 function renderWorkerReport(report = {}) {
+  const sum = report.summary || {};
+  const totalTasks = sum.requests ?? report.totalTasks ?? report.tasks?.length ?? 0;
+  const committed = sum.succeeded ?? report.committed ?? 0;
+  const rejected = sum.rejected ?? report.rejected ?? 0;
+  const duration = sum.durationMs ?? report.durationMs ?? 0;
+  const idHeader = report.batchId ? `batchId: ${report.batchId}` : `scenario: ${report.scenario || 'batch'}`;
+
   const lines = [
-    `batchId: ${report.batchId || ''}   duration: ${report.durationMs || 0} ms`,
-    `totalTasks: ${report.totalTasks || 0}   committed: ${report.committed || 0}   rejected: ${report.rejected || 0}`,
+    `${idHeader}   duration: ${duration} ms`,
+    `totalTasks: ${totalTasks}   committed: ${committed}   rejected: ${rejected}`,
     '',
     'threadId  pgBackendPid  tasksExecuted  committed  rejected'
   ];
 
-  for (const w of report.workerStats || []) {
+  const workerStats = report.workerStats || sum.perWorker || [];
+  for (const w of workerStats) {
     const tid = String(w.threadId || '').padEnd(9);
-    const pid = String(w.pgBackendPid || '').padEnd(13);
-    const executed = String(w.tasksExecuted || 0).padEnd(14);
-    const comm = String(w.committed || 0).padEnd(10);
+    const pid = String(w.pgBackendPid || w.pgPid || '').padEnd(13);
+    const executed = String(w.tasksExecuted ?? w.taskCount ?? 0).padEnd(14);
+    const comm = String(w.committed ?? w.succeeded ?? 0).padEnd(10);
     const rej = String(w.rejected || 0);
 
     lines.push(`${tid} ${pid} ${executed} ${comm} ${rej}`);
